@@ -1,0 +1,215 @@
+---
+title: "Troubleshoot Common PolyClaw Errors and Issues"
+sidebarTitle: "Troubleshooting"
+description: "Fix common PolyClaw errors: missing environment variables, insufficient pUSD balance, CLOB Cloudflare blocks, contract approval errors, and hedge scan issues."
+---
+
+This guide covers the most common errors encountered when using PolyClaw and how to resolve them. Errors are grouped by category — start with environment errors if you're setting up for the first time, or jump to the trading or hedge sections for runtime issues.
+
+## Environment errors
+
+<AccordionGroup>
+  <Accordion title='"No wallet available" / "POLYCLAW_PRIVATE_KEY not set"'>
+    **Cause:** The `POLYCLAW_PRIVATE_KEY` environment variable has not been set. PolyClaw cannot sign transactions or authenticate with the CLOB without it.
+
+    **Fix:** Export your EVM private key:
+
+    ```bash
+    export POLYCLAW_PRIVATE_KEY="0x..."
+    ```
+
+    Or, if you're using OpenClaw, add it to your `openclaw.json` under `skills.polyclaw.env`:
+
+    ```json
+    "polyclaw": {
+      "enabled": true,
+      "env": {
+        "POLYCLAW_PRIVATE_KEY": "0x..."
+      }
+    }
+    ```
+
+    <Warning>
+      Keep only small amounts in this wallet. Withdraw regularly to a more secure wallet. Never share or commit your private key.
+    </Warning>
+  </Accordion>
+
+  <Accordion title='"CHAINSTACK_NODE not set" / "ValueError: CHAINSTACK_NODE environment variable not set"'>
+    **Cause:** The Polygon RPC URL is not configured. This variable is required for all on-chain operations, including wallet balance checks, split transactions, and approvals.
+
+    **Fix:** Set the `CHAINSTACK_NODE` variable:
+
+    ```bash
+    export CHAINSTACK_NODE="https://polygon-mainnet.core.chainstack.com/YOUR_KEY"
+    ```
+
+    Get a free Chainstack node at [console.chainstack.com](https://console.chainstack.com) — sign up with GitHub, X, or Google. The free tier is sufficient for personal trading use.
+  </Accordion>
+
+  <Accordion title='"OPENROUTER_API_KEY not set"'>
+    **Cause:** The OpenRouter API key is missing. It is required specifically for the `hedge scan` and `hedge analyze` commands, which call an LLM via OpenRouter. Wallet and trading commands do not need it.
+
+    **Fix:**
+
+    ```bash
+    export OPENROUTER_API_KEY="sk-or-v1-..."
+    ```
+
+    Get a free key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys). The default hedge model (`nvidia/nemotron-nano-9b-v2:free`) is free to use.
+  </Accordion>
+</AccordionGroup>
+
+## Trading errors
+
+<AccordionGroup>
+  <Accordion title='"Insufficient pUSD: have X, need Y"'>
+    **Cause:** Your wallet does not have enough pUSD (Polymarket USD) to cover the requested trade amount. PolyClaw trades use pUSD as collateral — not USDC.e.
+
+    **Fix:** Check your current balances:
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet status
+    ```
+
+    If you have USDC.e but no pUSD, you need to wrap it 1:1 via the Collateral Onramp contract at `0x93070a847efEf7F70739046A929D47a521F5B8ee` — call the `wrap()` function with the amount of USDC.e you want to convert. The polymarket.com UI does this automatically when you deposit; API-only users must wrap manually.
+
+    <Info>
+      USDC.e and pUSD are separate tokens. The `wallet status` command shows both balances so you can see exactly what you have.
+    </Info>
+  </Accordion>
+
+  <Accordion title='"Approvals not set" or trade fails with approval error'>
+    **Cause:** The one-time Polymarket contract approval setup has not been completed for this wallet, or the wallet does not yet have V2 approvals set.
+
+    **Fix:** Run the approval command:
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet approve
+    ```
+
+    This submits 6 approval transactions to Polygon and costs approximately 0.01 POL in gas. You only need to do this once per wallet — approvals persist on-chain.
+  </Accordion>
+
+  <Accordion title='"CLOB order failed" / "IP blocked by Cloudflare" (HTTP 403)'>
+    **Cause:** Polymarket's CLOB API uses Cloudflare protection that blocks POST requests from many IP addresses, including all datacenter IP ranges and some residential ISPs.
+
+    **Important:** If you see this error, your `splitPosition` on-chain transaction has **already succeeded**. You hold both YES and NO tokens — only the CLOB sell step failed.
+
+    **Fix option 1 (recommended) — Use a rotating residential proxy:**
+
+    ```bash
+    export HTTPS_PROXY="http://user:pass@geo.iproyal.com:12321"
+    export CLOB_MAX_RETRIES=10
+    ```
+
+    The CLOB client will retry up to `CLOB_MAX_RETRIES` times, creating a fresh HTTP client (and thus a fresh IP) on each attempt. See the [Proxy Setup guide](/guides/proxy-setup) for full details.
+
+    **Fix option 2 — Use `--skip-sell` and sell manually:**
+
+    ```bash
+    uv run python scripts/polyclaw.py buy <market_id> YES 50 --skip-sell
+    ```
+
+    This skips the CLOB sell entirely. You keep both YES and NO tokens from the split and can sell the unwanted side later at polymarket.com → Portfolio.
+  </Accordion>
+
+  <Accordion title='"Split failed" / transaction reverted'>
+    **Cause:** The on-chain `splitPosition` transaction was rejected by the CTF contract. Common causes include:
+
+    - **Insufficient POL for gas** — the split transaction requires a small amount of POL (typically < 0.01 POL)
+    - **pUSD approval not set** — the CTF contract is not approved to spend your pUSD
+    - **Market no longer active** — the market has resolved or been paused
+    - **Incorrect collateral amount** — rounding or decimal issues with the amount
+
+    **Fix:** Check your POL and pUSD balances, re-run the approval command if needed, and verify the market is still open on polymarket.com:
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet status
+    uv run python scripts/polyclaw.py wallet approve
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Hedge scan issues
+
+<AccordionGroup>
+  <Accordion title="Hedge scan finds 0 results">
+    **Cause:** There are two possible reasons:
+
+    1. **Expected behavior** — The LLM correctly found no logically necessary implications in the scanned markets. PolyClaw's hedge scanner only accepts strict logical implications (contrapositive logic), not correlations or "likely" relationships. Most market pairs do not qualify, so zero results is the correct and common outcome.
+    2. **Model returned invalid JSON** — Some models return malformed or empty responses.
+
+    **Fix:** Try a more specific `--query` to narrow the market set:
+
+    ```bash
+    uv run python scripts/polyclaw.py hedge scan --query "election 2026"
+    ```
+
+    If zero results persist across many specific queries, try forcing the recommended model explicitly:
+
+    ```bash
+    uv run python scripts/polyclaw.py hedge scan --model nvidia/nemotron-nano-9b-v2:free
+    ```
+  </Accordion>
+
+  <Accordion title="Hedge scan returns too many spurious results (false positives)">
+    **Cause:** The LLM model being used is finding correlations or "likely" relationships instead of strict logical implications. This is a known issue with some models.
+
+    **Fix:** Switch to or confirm the default model:
+
+    ```bash
+    uv run python scripts/polyclaw.py hedge scan --model nvidia/nemotron-nano-9b-v2:free
+    ```
+
+    Known problematic models:
+    - **DeepSeek R1** — Uses `reasoning_content` in its response format, which causes output parsing failures
+    - Models known to hallucinate causal links will generate high volumes of low-quality results
+
+    The default `nvidia/nemotron-nano-9b-v2:free` model is free via OpenRouter and produces reliable logical implication analysis.
+  </Accordion>
+</AccordionGroup>
+
+## Other issues
+
+<AccordionGroup>
+  <Accordion title="Positions not showing up">
+    **Cause:** Positions are stored locally in `~/.openclaw/polyclaw/positions.json`. If this file does not exist (no trades have been executed yet) or was manually deleted, no positions will be shown.
+
+    The file is created automatically on your first successful trade. Until then, `polyclaw positions` will return an empty list — this is expected behavior, not an error.
+  </Accordion>
+
+  <Accordion title='"Market not found: &lt;slug&gt;" or "404 from Gamma API"'>
+    **Cause:** The market ID or slug provided is incorrect, or the market has been removed or resolved and is no longer returned by the Gamma API.
+
+    **Fix:** Get a fresh list of valid, currently active market IDs:
+
+    ```bash
+    uv run python scripts/polyclaw.py markets trending
+    uv run python scripts/polyclaw.py markets search "your topic"
+    ```
+
+    Use the IDs returned by these commands rather than copying IDs from old responses or browser URLs.
+  </Accordion>
+
+  <Accordion title="Redemption errors after a market resolves">
+    **Cause:** Several things can prevent a resolved market from being redeemed:
+
+    - **`condition_id` not stored** — older positions recorded before PolyClaw tracked this field
+    - **Market not yet resolved on-chain** — the market may show as resolved on the Polymarket UI before the on-chain settlement is final
+    - **Insufficient POL** — redemption requires a small gas fee
+
+    **Fix:** PolyClaw will automatically backfill the `condition_id` from the Gamma API for positions that are missing it. Check your POL balance with `wallet status`, and verify the market is fully settled on polymarket.com before redeeming:
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet status
+    uv run python scripts/polyclaw.py redeem list
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Still stuck?
+
+If the above steps don't resolve your issue:
+
+- Browse the source code and open an issue at [github.com/deniszidbaev-cmyk/polyclaw-cmyk](https://github.com/deniszidbaev-cmyk/polyclaw-cmyk)
+- PolyClaw is based on Chainstack's [polymarket-alpha-bot](https://github.com/chainstacklabs/polymarket-alpha-bot), which has its own documentation and community for lower-level Polymarket API questions

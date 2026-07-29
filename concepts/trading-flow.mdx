@@ -1,0 +1,136 @@
+---
+title: "How PolyClaw Executes Trades: Split + CLOB Flow"
+sidebarTitle: "Trading Flow"
+description: "PolyClaw buys Polymarket positions using a two-step split + CLOB mechanism: split pUSD into YES and NO tokens via the CTF contract, then sell the unwanted side on the order book."
+---
+
+PolyClaw cannot simply "buy YES tokens" on Polymarket the way you'd buy a share on a stock exchange. Polymarket is built on the Gnosis Conditional Token Framework (CTF), which means every outcome token is always minted in a pair. To hold a directional position you must first split collateral into both sides, then dispose of the side you don't want. This page walks through exactly how that works under the hood.
+
+## The Conditional Token Framework (CTF)
+
+The CTF is a Gnosis standard for representing conditional outcomes as ERC-1155 tokens on-chain. Every Polymarket question maps to a condition that has exactly two outcome slots: YES (`partition = 1`) and NO (`partition = 2`).
+
+When you deposit pUSD into the CTF contract it **always mints equal amounts of both tokens**. There is no way to mint only YES — the contract enforces the pairing. Each token is worth $0–$1 depending on the final outcome:
+
+- The **winning** token redeems 1:1 for $1 of pUSD.
+- The **losing** token redeems for $0.
+
+Because the two tokens are complementary, their market prices always sum to approximately $1 (YES price + NO price ≈ $1). To hold a directional position you must sell off the side you don't want on the CLOB order book.
+
+## Step-by-step trade execution
+
+<Steps>
+  <Step title="Fetch market info">
+    PolyClaw calls the Polymarket Gamma API (`GammaClient.get_market()`) to retrieve the market's `condition_id`, YES token ID, NO token ID, and current mid-market prices for both sides. These are required for the split call and the subsequent CLOB sell.
+  </Step>
+
+  <Step title="Check pUSD balance">
+    The wallet must hold enough **pUSD** — not USDC.e. PolyClaw reads the pUSD balance via `WalletManager.get_balances()` and aborts early if the balance is insufficient.
+
+    ```python
+    if balances.pusd < amount:
+        raise ValueError(
+            f"Insufficient pUSD: have {balances.pusd:.2f}, need {amount:.2f}. "
+            f"USDC.e balance: {balances.usdc_e:.2f} — wrap via CollateralOnramp "
+            f"(0x9307...B8ee) if needed."
+        )
+    ```
+
+    If you have USDC.e but no pUSD, wrap it 1:1 using the Collateral Onramp's `wrap()` function. The polymarket.com UI does this automatically; CLI users must call it manually.
+  </Step>
+
+  <Step title="Split position">
+    PolyClaw calls `CTF.splitPosition` on-chain to mint outcome tokens:
+
+    ```python
+    ctf.functions.splitPosition(
+        CONTRACTS["PUSD"],          # collateralToken = pUSD
+        bytes(32),                  # parentCollectionId = 0x00...00
+        condition_bytes,            # conditionId from Gamma API
+        [1, 2],                     # partition: slot 1 = YES, slot 2 = NO
+        int(amount_usd * 1e6),      # amount in 1e6 (pUSD has 6 decimals)
+    )
+    ```
+
+    Once this transaction is confirmed, your wallet holds `amount` YES tokens **and** `amount` NO tokens. The split is irreversible — you must then sell the unwanted side to realise your directional position.
+  </Step>
+
+  <Step title="Sell unwanted side on the CLOB">
+    `ClobClientWrapper.sell_fok()` creates a **FOK (Fill or Kill)** sell order at 10% below the current market price and posts it to `https://clob.polymarket.com`:
+
+    ```python
+    sell_price = round(max(price * 0.90, 0.01), 2)
+    order = client.create_order(OrderArgs(
+        token_id=unwanted_token_id,
+        price=sell_price,
+        size=amount,
+        side=SELL,
+    ))
+    result = client.post_order(order, OrderType.FOK)
+    ```
+
+    The 10% discount is intentional — it makes the order aggressive enough to hit resting buy orders in the book. A FOK order either fills entirely in one shot or cancels completely; there is no partial fill.
+  </Step>
+
+  <Step title="Record position">
+    On success, a `PositionEntry` is written to `~/.openclaw/polyclaw/positions.json`. This entry stores the market ID, question, position direction, token ID, entry price, split transaction hash, and CLOB order ID so you can track P&L later with `polyclaw positions`.
+  </Step>
+</Steps>
+
+## Understanding the economics
+
+Consider buying a YES position on a market where YES trades at **$0.65**:
+
+| Step | Action | Cash flow |
+|------|--------|-----------|
+| Split | Deposit $100 pUSD into CTF | −$100.00 |
+| Tokens received | 100 YES tokens + 100 NO tokens | — |
+| CLOB sell | Sell 100 NO tokens at $0.35 × 0.90 = $0.315 each | +$31.50 |
+| **Net cost** | $100.00 − $31.50 | **$68.50** |
+| **Effective entry** | $68.50 / 100 YES tokens | **$0.685 per YES** |
+
+The effective entry is slightly above the quoted mid-price ($0.65) because of the 10% sell-side discount. Actual recovery depends on order book depth at the time the CLOB order is placed — prices can move between the split submission and the CLOB fill.
+
+<Tip>
+  If you are buying a position close to $0.50, both sides are nearly equal in value and the slippage from the 10% discount has the largest proportional impact. Positions priced well above $0.50 have very cheap opposing tokens, so recovery is small but also less important.
+</Tip>
+
+## CLOB order types
+
+| Type | Behaviour | When used |
+|------|-----------|-----------|
+| **FOK** (Fill or Kill) | Must fill completely at the limit price or cancel instantly. No partial fills. | Default for selling the unwanted side after a split. |
+| **GTC** (Good Till Cancelled) | Sits in the order book until matched or manually cancelled. | Available via `ClobClientWrapper.buy_gtc()` for limit buys. |
+
+CLOB orders are matched **off-chain** by Polymarket's matching engine and settled in batches on-chain. The order ID returned by `post_order` is a 0x hex string like:
+
+```
+0xc93d6214515b2436feb684854c98d314ad19111d7ab822a9c885d61588d5beaa
+```
+
+<Warning>
+  This is **not a blockchain transaction hash**. It is an off-chain Polymarket order book identifier. You cannot look it up on Polygonscan. To view trade history, connect your wallet at polymarket.com → Portfolio → Activity.
+</Warning>
+
+## What happens if the CLOB sell fails
+
+The split is an on-chain transaction that confirms before the CLOB sell is even attempted. If the CLOB sell fails for any reason, **the split has already succeeded** — you hold both YES and NO tokens in your wallet.
+
+Common failure causes and their remedies:
+
+- **Cloudflare IP block** — Polymarket's CLOB API blocks many datacenter IPs. Set `HTTPS_PROXY` to a rotating residential proxy and `CLOB_MAX_RETRIES=10`. The client will retry with a new IP on each attempt.
+- **Insufficient liquidity** — No resting buy orders exist at the sell price. Sell manually on polymarket.com → Portfolio.
+- **Intentional skip** — Pass `--skip-sell` to keep both sides deliberately (useful for LP or manual strategies).
+
+```bash
+# Keep both YES and NO tokens — no CLOB sell attempted
+polyclaw buy <market_id> YES 50 --skip-sell
+```
+
+## Redeeming on resolution
+
+When a market resolves, the winning tokens can be exchanged 1:1 for pUSD by calling `CTF.redeemPositions`.
+
+<Info>
+  polymarket.com auto-redeems only positions placed through its own UI. Positions entered via PolyClaw must be redeemed manually using `polyclaw redeem`. The command calls `CTF.redeemPositions(pUSD, 0x00...00, conditionId, indexSets)` where `indexSets = [1]` for YES and `[2]` for NO.
+</Info>

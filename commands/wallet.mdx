@@ -1,0 +1,106 @@
+---
+title: "polyclaw wallet — Manage Wallet Status and Approvals"
+sidebarTitle: "wallet"
+description: "Check your Polygon wallet address and balances (POL, pUSD, USDC.e), and set the one-time Polymarket V2 contract approvals required before trading."
+---
+
+PolyClaw executes trades directly on Polygon using a private key configured via the `POLYCLAW_PRIVATE_KEY` environment variable. The `wallet` commands let you inspect your wallet's current state and grant the contract approvals that Polymarket's V2 exchange requires before any split or CLOB operation can succeed.
+
+## `polyclaw wallet status`
+
+Displays the wallet address, unlock state, approval status, and current token balances.
+
+**Usage**
+
+```bash
+polyclaw wallet status
+```
+
+**Example output**
+
+```json
+{
+  "address": "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+  "unlocked": true,
+  "approvals_set": true,
+  "balances": {
+    "POL": "0.234500",
+    "pUSD": "95.000000",
+    "USDC.e": "0.000000"
+  }
+}
+```
+
+**Fields**
+
+| Field | Description |
+|-------|-------------|
+| `address` | Your Polygon wallet address (derived from `POLYCLAW_PRIVATE_KEY`) |
+| `unlocked` | Whether the private key is loaded and accessible |
+| `approvals_set` | Whether the Polymarket V2 exchange approvals are in place |
+| `balances.POL` | Native Polygon token balance (used for gas) |
+| `balances.pUSD` | Polymarket USD balance (trading collateral) |
+| `balances.USDC.e` | Bridged USDC on Polygon (can be wrapped 1:1 to pUSD) |
+
+<Note>
+  If `approvals_set` is `false`, a migration notice is printed alongside the JSON. Polymarket migrated from USDC.e / V1 contracts to pUSD / V2 Exchange contracts on **2026-04-28**. Old V1 USDC.e approvals are stale but harmless. Run `polyclaw wallet approve` to set the new V2 approvals.
+</Note>
+
+---
+
+## `polyclaw wallet approve`
+
+Submits the one-time Polymarket V2 contract approval transactions to Polygon. This is required before your first trade and only needs to be done once per wallet.
+
+**Usage**
+
+```bash
+polyclaw wallet approve
+```
+
+<Steps>
+  <Step title="Submits 6 approval transactions">
+    Six `approve` calls are sent to Polygon, authorising the Polymarket CTF Exchange and related V2 contracts to move your pUSD and outcome tokens.
+  </Step>
+  <Step title="Wait for confirmations">
+    Each transaction is confirmed on-chain. The command prints a numbered list of transaction hashes on completion.
+  </Step>
+  <Step title="Verify with wallet status">
+    Run `polyclaw wallet status` afterwards to confirm `approvals_set: true`.
+  </Step>
+</Steps>
+
+<Warning>
+  This command sends 6 on-chain transactions and costs approximately **0.01 POL** in gas fees. Make sure your wallet holds sufficient POL before running it. POL can be acquired via any Polygon-compatible exchange or bridge.
+</Warning>
+
+---
+
+## Understanding balances
+
+<CardGroup cols={3}>
+  <Card title="POL" icon="gas-pump">
+    The native Polygon token. Used exclusively for gas fees. **Not** a trading collateral. You need a small amount (≥ 0.05 POL recommended) in your wallet at all times to cover transaction costs.
+  </Card>
+  <Card title="pUSD" icon="dollar-sign">
+    Polymarket USD — the trading collateral introduced in the V2 migration on 2026-04-28. All splits and redemptions are denominated in pUSD. If your balance is zero, wrap your USDC.e or deposit via the Polymarket UI.
+  </Card>
+  <Card title="USDC.e" icon="circle-dollar-to-slot">
+    Bridged USDC on Polygon. No longer accepted directly by Polymarket contracts. Wrap 1:1 to pUSD via the Collateral Onramp contract at `0x93070a847efEf7F70739046A929D47a521F5B8ee` (call `wrap()`). The polymarket.com UI does this automatically; CLI users must wrap manually.
+  </Card>
+</CardGroup>
+
+### Wrapping USDC.e to pUSD
+
+If `polyclaw wallet status` shows a USDC.e balance but zero pUSD, you need to wrap before trading:
+
+```bash
+# Check what you have
+polyclaw wallet status
+
+# If USDC.e > 0 and pUSD == 0, wrap via the Collateral Onramp:
+# Contract: 0x93070a847efEf7F70739046A929D47a521F5B8ee
+# Function: wrap(uint256 amount)   # amount in 1e6 (USDC.e decimals)
+```
+
+The 1:1 wrap is instantaneous and costs only a small amount of POL for gas.

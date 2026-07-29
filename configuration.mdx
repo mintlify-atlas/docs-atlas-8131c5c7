@@ -1,0 +1,126 @@
+---
+title: "Configure PolyClaw Environment Variables and Options"
+sidebarTitle: "Configuration"
+description: "All environment variables for PolyClaw: Chainstack RPC, private key, OpenRouter API key, proxy settings, and optional CLOB retry and builder code configuration."
+---
+
+PolyClaw is configured entirely through environment variables — there is no separate configuration file. Every variable can be set in your `openclaw.json` skill entry (recommended for OpenClaw users), exported directly in your shell, or placed in a `.env` file in the skill root directory, which PolyClaw loads automatically via `python-dotenv` on every invocation.
+
+## Required Variables
+
+These three variables unlock the core trading and hedge-discovery functionality. Market browsing commands (`markets trending`, `markets search`, `market <id>`) work without any credentials since they query the public Polymarket Gamma API.
+
+<ParamField path="CHAINSTACK_NODE" type="string" required>
+  Polygon mainnet RPC endpoint used for all on-chain transactions (contract approvals, split, and collateral redemption). PolyClaw does not work with public RPC endpoints due to rate limits and reliability requirements.
+
+  **Get it:** Sign up at [console.chainstack.com](https://console.chainstack.com) (free tier available, sign up with GitHub, X, or Google) → create a Polygon mainnet node → copy the HTTPS URL.
+
+  **Example:** `https://polygon-mainnet.core.chainstack.com/YOUR_KEY`
+
+  Required for: `wallet status`, `wallet approve`, `buy`, `redeem`
+</ParamField>
+
+<ParamField path="POLYCLAW_PRIVATE_KEY" type="string" required>
+  EVM wallet private key used to sign all on-chain transactions. Accepts hex format with or without the `0x` prefix.
+
+  Use a **dedicated wallet** with small balances only. This key is exposed as an environment variable for automation convenience — do not reuse a wallet that holds significant funds.
+
+  **Example:** `0xabc123...` or `abc123...`
+
+  Required for: `wallet status`, `wallet approve`, `buy`, `redeem`
+</ParamField>
+
+<ParamField path="OPENROUTER_API_KEY" type="string" required>
+  OpenRouter API key for LLM-powered hedge discovery. PolyClaw uses the `nvidia/nemotron-nano-9b-v2:free` model by default, which is available on the free tier.
+
+  **Get it:** Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys). A free tier is available with no credit card required.
+
+  **Example:** `sk-or-v1-...`
+
+  Required for: `hedge scan`, `hedge analyze`
+</ParamField>
+
+## Optional Variables
+
+<ParamField path="HTTPS_PROXY" type="string">
+  Rotating residential proxy URL. Strongly recommended when Cloudflare blocks CLOB POST requests — a common issue for datacenter IPs and some residential ISPs.
+
+  When set, PolyClaw routes all CLOB order submissions through the proxy and automatically retries with a fresh IP on each attempt. With a rotating proxy (e.g., IPRoyal), orders typically succeed within 5–10 retries as the proxy cycles through unblocked IPs.
+
+  **Example:** `http://user:pass@geo.iproyal.com:12321`
+
+  Affects: the CLOB sell step inside every `buy` command
+</ParamField>
+
+<ParamField path="CLOB_MAX_RETRIES" type="integer" default="5">
+  Maximum number of CLOB order submission attempts when using a rotating proxy. Each retry uses a new proxy IP. Increase this value if your proxy pool is slow to find an unblocked IP.
+
+  **Example:** `10`
+</ParamField>
+
+<ParamField path="POLY_BUILDER_CODE" type="string">
+  Optional bytes32 builder attribution code from [polymarket.com/settings?tab=builder](https://polymarket.com/settings?tab=builder). When set, this code is attached to every CLOB order PolyClaw submits, attributing trading volume to your registered builder account.
+
+  **Example:** `0x706f6c79636c6177000000000000000000000000000000000000000000000000`
+</ParamField>
+
+## Setting Variables in openclaw.json
+
+For OpenClaw users, the recommended approach is to embed all variables in the `skills.entries.polyclaw.env` block of your `openclaw.json`. OpenClaw injects these into the skill process environment at invocation time.
+
+```json
+"polyclaw": {
+  "enabled": true,
+  "env": {
+    "CHAINSTACK_NODE": "https://polygon-mainnet.core.chainstack.com/YOUR_KEY",
+    "POLYCLAW_PRIVATE_KEY": "0x...",
+    "OPENROUTER_API_KEY": "sk-or-v1-...",
+    "HTTPS_PROXY": "http://user:pass@geo.iproyal.com:12321",
+    "CLOB_MAX_RETRIES": "10"
+  }
+}
+```
+
+<Warning>
+  The private key is stored in `openclaw.json` as plaintext for automation convenience. Restrict file permissions on `openclaw.json`, keep only small amounts in the configured wallet, and withdraw profits regularly to a separate secure wallet that is never exposed as an environment variable.
+</Warning>
+
+## Standalone Usage
+
+If you are running PolyClaw without OpenClaw, export the variables directly in your shell before invoking the CLI:
+
+```bash
+export CHAINSTACK_NODE="https://polygon-mainnet.core.chainstack.com/YOUR_KEY"
+export POLYCLAW_PRIVATE_KEY="0x..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
+uv run python scripts/polyclaw.py markets trending
+```
+
+Alternatively, create a `.env` file in the skill root directory (`~/.openclaw/skills/polyclaw/.env`). PolyClaw calls `load_dotenv()` at startup and picks up all variables defined there automatically — no shell export required.
+
+```bash
+# ~/.openclaw/skills/polyclaw/.env
+CHAINSTACK_NODE=https://polygon-mainnet.core.chainstack.com/YOUR_KEY
+POLYCLAW_PRIVATE_KEY=0x...
+OPENROUTER_API_KEY=sk-or-v1-...
+HTTPS_PROXY=http://user:pass@geo.iproyal.com:12321
+CLOB_MAX_RETRIES=10
+```
+
+## Variable Quick Reference
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `CHAINSTACK_NODE` | Yes (trading) | — | Polygon mainnet RPC URL |
+| `POLYCLAW_PRIVATE_KEY` | Yes (trading) | — | EVM wallet private key |
+| `OPENROUTER_API_KEY` | Yes (hedge) | — | LLM API key for hedge discovery |
+| `HTTPS_PROXY` | Recommended | — | Rotating residential proxy for CLOB |
+| `CLOB_MAX_RETRIES` | No | `5` | Max CLOB retries with IP rotation |
+| `POLY_BUILDER_CODE` | No | — | Bytes32 builder attribution code |
+
+<Note>
+  **Where to find each key:**
+  - **Chainstack node** — Free tier at [console.chainstack.com](https://console.chainstack.com). Sign up with GitHub, X, or Google; no credit card required for the free tier.
+  - **OpenRouter API key** — Free tier at [openrouter.ai](https://openrouter.ai). Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys).
+  - **POLY_BUILDER_CODE** — Optional. Generate at [polymarket.com/settings?tab=builder](https://polymarket.com/settings?tab=builder) if you want trading volume attributed to your builder account.
+</Note>

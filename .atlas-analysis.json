@@ -1,0 +1,86 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "PolyClaw",
+  "projectDescription": "A trading-enabled Polymarket skill for OpenClaw that lets you browse prediction markets, execute on-chain trades via split + CLOB, track positions with live P&L, and discover hedging opportunities using LLM-powered logical implication analysis.",
+  "theme": "luma",
+  "primaryColor": "#047cfc",
+  "lightColor": "#79bcfc",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Command Reference",
+            "pages": [
+              "commands/markets",
+              "commands/wallet",
+              "commands/trading",
+              "commands/positions",
+              "commands/hedge",
+              "commands/redeem"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/trading-flow",
+              "concepts/hedge-discovery",
+              "concepts/contracts"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/openclaw-integration",
+              "guides/proxy-setup",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Browse Polymarket prediction markets by trending volume or keyword search",
+    "Execute on-chain trades via split + CLOB mechanism on Polygon",
+    "Track open positions with live P&L calculations",
+    "LLM-powered hedge discovery using contrapositive logical implication",
+    "Redeem collateral from resolved market positions",
+    "OpenClaw skill integration for natural language trading via Claude",
+    "Rotating proxy support for Cloudflare-blocked CLOB endpoints",
+    "Coverage tier classification (T1–T4) for hedge quality ranking"
+  ],
+  "publicApiSurface": [
+    "polyclaw markets trending [--limit N] [--full] [--json]",
+    "polyclaw markets search <query> [--limit N] [--full] [--json]",
+    "polyclaw markets events [--limit N] [--json]",
+    "polyclaw market <market_id>",
+    "polyclaw wallet status",
+    "polyclaw wallet approve",
+    "polyclaw buy <market_id> YES|NO <amount> [--skip-sell] [--json]",
+    "polyclaw positions [--all] [--json]",
+    "polyclaw position <position_id>",
+    "polyclaw redeem list [--json]",
+    "polyclaw redeem <position_id>",
+    "polyclaw redeem all",
+    "polyclaw hedge scan [--query Q] [--limit N] [--min-coverage F] [--tier N] [--model M] [--json]",
+    "polyclaw hedge analyze <id1> <id2> [--min-coverage F] [--json]",
+    "lib.gamma_client.GammaClient",
+    "lib.clob_client.ClobClientWrapper",
+    "lib.coverage.build_portfolio",
+    "lib.coverage.calculate_coverage_metrics",
+    "lib.coverage.classify_tier",
+    "lib.position_storage.PositionStorage",
+    "lib.wallet_manager.WalletManager"
+  ]
+}

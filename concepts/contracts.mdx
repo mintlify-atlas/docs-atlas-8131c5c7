@@ -1,0 +1,120 @@
+---
+title: "Polymarket Contract Addresses on Polygon Mainnet (CLOB V2)"
+sidebarTitle: "Contracts"
+description: "All Polymarket smart contract addresses on Polygon mainnet for PolyClaw: pUSD collateral, USDC.e onramp, CTF, CTF Exchange V2, Neg Risk Exchange, and Neg Risk Adapter."
+---
+
+PolyClaw interacts with a set of Polymarket smart contracts on Polygon mainnet. These are the post-2026-04-28 CLOB V2 addresses that use **pUSD** as collateral instead of USDC.e. Every on-chain action PolyClaw performs — approvals, splits, and redemptions — routes through this contract set. Understanding what each contract does helps when diagnosing failed transactions or verifying approvals.
+
+<Note>
+  These are the V2 contracts active after the 2026-04-28 cutover. Previous V1 USDC.e approvals granted to the old exchange addresses are stale but harmless — they do not interfere with V2 trading. The V2 exchange addresses require fresh pUSD approvals via `polyclaw wallet approve`.
+</Note>
+
+## Contract addresses
+
+| Contract | Address | Purpose |
+|----------|---------|---------|
+| **pUSD** (collateral) | `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` | Primary trading collateral. All splits and redemptions use this token. pUSD has 6 decimal places. |
+| **USDC.e** (onramp input) | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` | Bridged USDC on Polygon. Wrap 1:1 into pUSD via the Collateral Onramp if needed. |
+| **Collateral Onramp** | `0x93070a847efEf7F70739046A929D47a521F5B8ee` | Wraps USDC.e → pUSD via the `wrap()` function. polymarket.com calls this automatically; API users must call it manually. |
+| **CTF** (Conditional Token Framework) | `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045` | Core Gnosis CTF contract for splitting and redeeming outcome tokens. PolyClaw calls `splitPosition` (buy) and `redeemPositions` (redeem). |
+| **CTF Exchange V2** | `0xE111180000d2663C0091e4f400237545B87B996B` | CLOB matching engine for standard markets. Outcome token trades are routed here. |
+| **Neg Risk CTF Exchange V2** | `0xe2222d279d744050d28e00520010520000310F59` | CLOB engine for negative-risk markets (multi-outcome markets where at most one outcome can resolve YES). |
+| **Neg Risk Adapter** | `0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296` | Adapter contract for negative-risk market interactions. Required for `setApprovalForAll`. |
+
+## Key contract functions used by PolyClaw
+
+### `CTF.splitPosition`
+
+Called during `polyclaw buy` to mint YES and NO outcome tokens from pUSD collateral.
+
+**Signature:**
+```solidity
+function splitPosition(
+    IERC20  collateralToken,
+    bytes32 parentCollectionId,
+    bytes32 conditionId,
+    uint[]  partition,
+    uint    amount
+) external
+```
+
+**Parameters as used by PolyClaw:**
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `collateralToken` | pUSD address (`0xC011...DFB`) | Must be pre-approved to CTF |
+| `parentCollectionId` | `bytes(32)` (32 zero bytes) | Top-level position, no parent |
+| `conditionId` | From Gamma API | Unique per market question |
+| `partition` | `[1, 2]` | Slot 1 = YES outcome, slot 2 = NO outcome |
+| `amount` | `int(amount_usd * 1e6)` | pUSD has 6 decimals; $50 = `50_000_000` |
+
+After a successful call your wallet receives `amount` YES tokens and `amount` NO tokens as ERC-1155 assets.
+
+### `CTF.redeemPositions`
+
+Called during `polyclaw redeem` to exchange winning outcome tokens back for pUSD after market resolution.
+
+**Signature:**
+```solidity
+function redeemPositions(
+    IERC20  collateralToken,
+    bytes32 parentCollectionId,
+    bytes32 conditionId,
+    uint[]  indexSets
+) external
+```
+
+**Parameters as used by PolyClaw:**
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `collateralToken` | pUSD address | Same token used in split |
+| `parentCollectionId` | `bytes(32)` | Must match the split call |
+| `conditionId` | From position record | Stored in `positions.json` at trade time |
+| `indexSets` | `[1]` for YES, `[2]` for NO | Which outcome slot to redeem |
+
+<Info>
+  `redeemPositions` only pays out if the market has resolved and the oracle has reported a result. Calling it on an unresolved market will revert. PolyClaw reads `CTF.payoutDenominator(conditionId)` to verify resolution before attempting redemption.
+</Info>
+
+## Approvals required
+
+Before any trade can be executed, six ERC-20 and ERC-1155 approvals must be granted. These are **one-time per wallet** — once set they never expire unless explicitly revoked.
+
+```bash
+polyclaw wallet approve
+```
+
+This submits six transactions in sequence (~0.01 POL in total gas):
+
+| # | Contract | Method | Spender | Reason |
+|---|----------|--------|---------|--------|
+| 1 | pUSD | `approve(MAX_UINT256)` | CTF | Allow CTF to pull pUSD for `splitPosition` |
+| 2 | pUSD | `approve(MAX_UINT256)` | CTF Exchange V2 | Allow exchange to handle pUSD settlement |
+| 3 | pUSD | `approve(MAX_UINT256)` | Neg Risk CTF Exchange V2 | Same for neg-risk markets |
+| 4 | CTF | `setApprovalForAll(true)` | CTF Exchange V2 | Allow exchange to transfer outcome tokens |
+| 5 | CTF | `setApprovalForAll(true)` | Neg Risk CTF Exchange V2 | Same for neg-risk markets |
+| 6 | CTF | `setApprovalForAll(true)` | Neg Risk Adapter | Allow adapter to handle neg-risk positions |
+
+You can check whether approvals are already set without spending gas:
+
+```bash
+polyclaw wallet status
+```
+
+`WalletManager.check_approvals()` verifies all six approvals on-chain and returns a boolean before any trade attempt.
+
+## Chain information
+
+| Property | Value |
+|----------|-------|
+| Network | Polygon mainnet |
+| Chain ID | 137 |
+| RPC | Chainstack Polygon node (set via `CHAINSTACK_NODE`) |
+| Gas token | POL (native Polygon token) |
+| Block explorer | [polygonscan.com](https://polygonscan.com) |
+
+<Tip>
+  You need only a small amount of POL for gas. Approval transactions cost ~0.01 POL total and individual trade split transactions cost roughly 0.002–0.005 POL each at normal gas prices. Top up at any CEX that supports Polygon withdrawals.
+</Tip>

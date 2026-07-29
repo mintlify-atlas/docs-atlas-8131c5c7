@@ -1,0 +1,203 @@
+---
+title: "polyclaw positions — Track Open Positions and P&L"
+sidebarTitle: "positions"
+description: "List all open Polymarket positions with live P&L, view individual position details, and manage position records including manual add, close, and delete operations."
+---
+
+PolyClaw records every trade in a local JSON file at `~/.openclaw/polyclaw/positions.json`. The `positions` commands read that file, fetch current prices from the Gamma API, and compute live profit/loss for each entry. You can also add positions manually (for importing legacy trades), close them, or delete records.
+
+## `polyclaw positions`
+
+Lists your positions with live P&L fetched from the Gamma API.
+
+**Usage**
+
+```bash
+polyclaw positions [--all] [--json]
+```
+
+**Flags**
+
+<ParamField query="--all" type="boolean">
+  Include closed positions in the output. By default only `open` positions are shown.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  Output as a JSON array instead of a formatted table.
+</ParamField>
+
+**Example — table output**
+
+```bash
+polyclaw positions
+```
+
+```
+ID         Side  Entry    Now    P&L        Market
+--------------------------------------------------------------------------------
+a1b2c3d4   YES   $0.68   $0.72  +$2.00    Will X happen by end of year?...
+e5f6g7h8   NO    $0.32   $0.28  +$1.14    Will Y be announced in Q3?...
+--------------------------------------------------------------------------------
+Total: 2 positions | Value: $71.14 | P&L: +$3.14
+
+1 resolved position(s) pending redemption — run `polyclaw redeem list`.
+```
+
+The table columns are:
+
+| Column | Description |
+|--------|-------------|
+| `ID` | First 8 characters of the position UUID |
+| `Side` | `YES` or `NO` |
+| `Entry` | Effective entry price after accounting for CLOB sell recovery |
+| `Now` | Current market price from Gamma API |
+| `P&L` | Absolute profit/loss in USD |
+| `Market` | Truncated market question (first 35 chars) |
+
+At the bottom, totals show position count, total current value, and aggregate P&L. If any resolved markets have unredeemed winning tokens, a reminder to run `polyclaw redeem list` is shown.
+
+---
+
+## `polyclaw position <position_id>`
+
+Shows full details for a single position, including all stored fields and a live P&L breakdown.
+
+**Usage**
+
+```bash
+polyclaw position <position_id>
+```
+
+**Parameters**
+
+<ParamField path="position_id" type="string" required>
+  Position ID prefix. As few as 8 characters are sufficient as long as the prefix is unambiguous. The full UUID is shown in `polyclaw positions` output.
+</ParamField>
+
+**Example**
+
+```bash
+polyclaw position a1b2c3d4
+```
+
+```json
+{
+  "position_id": "a1b2c3d4-...",
+  "market_id": "abc123...",
+  "question": "Will X happen by end of year?",
+  "position": "YES",
+  "token_id": "0x111...",
+  "entry_time": "2025-06-01T14:32:00+00:00",
+  "entry_amount": 50.0,
+  "entry_price": 0.65,
+  "split_tx": "0xabc...",
+  "clob_order_id": "0xc93d...",
+  "clob_filled": true,
+  "status": "open",
+  "condition_id": "0xdef...",
+  "redeem_tx": null,
+  "pnl_info": {
+    "current_price": 0.72,
+    "entry_price": 0.65,
+    "effective_entry": 0.682,
+    "current_value": 36.0,
+    "cost_basis": 34.0,
+    "pnl": 2.0,
+    "pnl_pct": 5.88,
+    "market_active": true,
+    "market_resolved": false,
+    "market_outcome": null
+  }
+}
+```
+
+---
+
+## How P&L is calculated
+
+Token count equals `entry_amount` because the CTF split always mints 1 token per $1 deposited.
+
+<Steps>
+  <Step title="Determine actual cost basis">
+    If the CLOB sell filled (`clob_filled: true`), the cost is reduced by the approximate recovery: `actual_cost = entry_amount − (token_count × unwanted_price × 0.9)`. The 0.9 factor models approximately 10% slippage from the FOK discount.
+
+    If the CLOB sell did not fill, `actual_cost = entry_amount` (full split amount).
+  </Step>
+  <Step title="Calculate current value">
+    `current_value = token_count × current_price`
+
+    `current_price` is the live YES or NO price from the Gamma API, depending on your position side.
+  </Step>
+  <Step title="Compute P&L">
+    `pnl = current_value − actual_cost`
+
+    `pnl_pct = (pnl / actual_cost) × 100`
+  </Step>
+</Steps>
+
+---
+
+## Position data
+
+Positions are stored locally in `~/.openclaw/polyclaw/positions.json`. Each entry contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `position_id` | string | UUID assigned at trade time |
+| `market_id` | string | Polymarket market ID |
+| `question` | string | Market question text |
+| `position` | string | `"YES"` or `"NO"` |
+| `token_id` | string | ERC-1155 token ID for the purchased outcome |
+| `entry_time` | string | ISO 8601 timestamp of trade execution |
+| `entry_amount` | float | USD amount deposited in the split |
+| `entry_price` | float | Market price at entry |
+| `split_tx` | string | On-chain `splitPosition` transaction hash |
+| `clob_order_id` | string \| null | CLOB order identifier (off-chain) |
+| `clob_filled` | bool | Whether the FOK sell was matched |
+| `status` | string | `"open"`, `"closed"`, or `"resolved"` |
+| `condition_id` | string | CTF condition ID (used for redemption) |
+| `redeem_tx` | string \| null | Transaction hash once redeemed, or `null` |
+
+---
+
+## Advanced subcommands
+
+### `positions add`
+
+Manually add a position record. Useful for importing trades executed outside of PolyClaw.
+
+```bash
+polyclaw positions add <market_id> YES|NO <amount> <price> [--question Q] [--token-id T] [--tx H]
+```
+
+<ParamField path="market_id" type="string" required>Market ID.</ParamField>
+<ParamField path="YES|NO" type="string" required>Position side.</ParamField>
+<ParamField path="amount" type="float" required>Entry amount in USD.</ParamField>
+<ParamField path="price" type="float" required>Entry price (0–1).</ParamField>
+<ParamField query="--question" type="string">Market question text (defaults to `"Manual entry"`).</ParamField>
+<ParamField query="--token-id" type="string">ERC-1155 token ID for the outcome.</ParamField>
+<ParamField query="--tx" type="string">Transaction hash (defaults to `"manual"`).</ParamField>
+
+---
+
+### `positions close`
+
+Mark a position as closed without deleting the record.
+
+```bash
+polyclaw positions close <position_id>
+```
+
+---
+
+### `positions delete`
+
+Permanently delete a position record from local storage. Prompts for confirmation unless `--force` is used.
+
+```bash
+polyclaw positions delete <position_id> [--force]
+```
+
+<ParamField query="--force" type="boolean">
+  Skip the `[y/N]` confirmation prompt. Also accepts `-f`.
+</ParamField>

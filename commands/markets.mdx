@@ -1,0 +1,259 @@
+---
+title: "polyclaw markets — Browse and Search Polymarket"
+sidebarTitle: "markets"
+description: "Browse trending Polymarket prediction markets by volume, search by keyword, view market details, and list event groups. Supports table and JSON output modes."
+---
+
+PolyClaw's market commands connect to the Polymarket Gamma API to fetch live prediction markets. You can browse by volume, filter by keyword, look up individual markets by ID or slug, and explore event groups — all from the terminal or in JSON mode for agent/script pipelines.
+
+<Note>
+  Market IDs can be obtained from the output of `polyclaw markets trending` or `polyclaw markets search`, or extracted from the Polymarket URL slug (e.g. `https://polymarket.com/event/will-trump-win-2028` → ID `will-trump-win-2028`).
+</Note>
+
+## `polyclaw markets trending`
+
+Lists the top prediction markets sorted by 24-hour trading volume.
+
+**Usage**
+
+```bash
+polyclaw markets trending [--limit N] [--full] [--json]
+```
+
+**Flags**
+
+<ParamField query="--limit N" type="integer" default="20">
+  Number of markets to return.
+</ParamField>
+
+<ParamField query="--full" type="boolean">
+  Show the full question text without truncation. By default questions are truncated at 60 characters in table mode.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  Output as a JSON array for agent or script consumption. Full question text is always included in JSON mode.
+</ParamField>
+
+**Example — table output**
+
+```bash
+polyclaw markets trending --limit 5
+```
+
+```
+ID           YES    NO   24h Vol   Question
+--------------------------------------------------------------------------------
+abc123def...  $0.65  $0.35   $1.2M  Will Trump win the 2028 election?...
+def456ghi...  $0.82  $0.18    $890K  Will the Fed cut rates in June?...
+```
+
+**Example — JSON output**
+
+```bash
+polyclaw markets trending --limit 2 --json
+```
+
+```json
+[
+  {
+    "id": "abc123def456...",
+    "question": "Will Trump win the 2028 election?",
+    "yes": "$0.65",
+    "no": "$0.35",
+    "volume_24h": "$1.2M",
+    "volume_total": "$8.5M"
+  }
+]
+```
+
+---
+
+## `polyclaw markets search <query>`
+
+Searches markets by keyword, filtering client-side from a large batch fetched via the Gamma API.
+
+**Usage**
+
+```bash
+polyclaw markets search <query> [--limit N] [--full] [--json]
+```
+
+<Note>
+  The Gamma API does not support server-side text search. PolyClaw fetches a large batch of markets and filters client-side by matching your query against market questions. Results are ranked by 24h volume.
+</Note>
+
+**Parameters**
+
+<ParamField path="query" type="string" required>
+  Keyword or phrase to search for in market questions.
+</ParamField>
+
+**Flags**
+
+<ParamField query="--limit N" type="integer" default="20">
+  Maximum number of matching results to return.
+</ParamField>
+
+<ParamField query="--full" type="boolean">
+  Show full question text without truncation.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  Output as a JSON array.
+</ParamField>
+
+**Example**
+
+```bash
+polyclaw markets search "election" --limit 10
+```
+
+```
+ID           YES    NO   24h Vol   Question
+--------------------------------------------------------------------------------
+abc123def...  $0.65  $0.35   $1.2M  Will Trump win the 2028 election?...
+xyz789abc...  $0.50  $0.50    $430K  Will the UK election happen in Q3?...
+```
+
+---
+
+## `polyclaw market <market_id>`
+
+Shortcut for `polyclaw markets details <market_id>`. Returns the full market object as JSON.
+
+**Usage**
+
+```bash
+polyclaw market <market_id>
+```
+
+**Parameters**
+
+<ParamField path="market_id" type="string" required>
+  Accepts any of the following:
+  - A numeric Gamma market ID (e.g. `123456`)
+  - A full market ID string (e.g. `abc123def456...`)
+  - A Polymarket slug (e.g. `will-trump-win-2028`)
+  - A full Polymarket URL (e.g. `https://polymarket.com/event/will-trump-win-2028`)
+</ParamField>
+
+**Example**
+
+```bash
+polyclaw market will-trump-win-2028
+```
+
+```json
+{
+  "id": "abc123def456...",
+  "question": "Will Trump win the 2028 election?",
+  "slug": "will-trump-win-2028",
+  "condition_id": "0xabc...",
+  "prices": {
+    "yes": 0.65,
+    "no": 0.35
+  },
+  "tokens": {
+    "yes_token_id": "0x111...",
+    "no_token_id": "0x222..."
+  },
+  "volume": {
+    "24h": 1200000.0,
+    "total": 8500000.0
+  },
+  "liquidity": 250000.0,
+  "status": {
+    "active": true,
+    "closed": false,
+    "resolved": false,
+    "outcome": null
+  },
+  "end_date": "2028-11-03T00:00:00Z",
+  "url": "https://polymarket.com/event/will-trump-win-2028"
+}
+```
+
+**Response fields**
+
+| Field | Description |
+|-------|-------------|
+| `id` | Market ID |
+| `question` | Full market question |
+| `slug` | URL slug |
+| `condition_id` | CTF condition ID (needed for on-chain operations) |
+| `prices.yes` / `prices.no` | Current YES and NO prices (0–1) |
+| `tokens.yes_token_id` / `tokens.no_token_id` | ERC-1155 token IDs for each outcome |
+| `volume.24h` / `volume.total` | 24-hour and total trading volume in USD |
+| `liquidity` | Current liquidity in USD |
+| `status.active` | Whether the market is still open for trading |
+| `status.resolved` | Whether the market has been resolved |
+| `status.outcome` | Resolution outcome if resolved |
+| `end_date` | Scheduled closing date |
+| `url` | Link to the market on polymarket.com |
+
+---
+
+## `polyclaw markets events`
+
+Lists event groups — multi-market events that bundle related markets together under a shared topic.
+
+**Usage**
+
+```bash
+polyclaw markets events [--limit N] [--full] [--json]
+```
+
+**Flags**
+
+<ParamField query="--limit N" type="integer" default="10">
+  Number of events to return.
+</ParamField>
+
+<ParamField query="--full" type="boolean">
+  Show full question text for each market without truncation.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  Output full event data as a JSON array. JSON mode includes up to 5 markets per event; table mode shows up to 3.
+</ParamField>
+
+**Example — table output**
+
+```bash
+polyclaw markets events --limit 3
+```
+
+```
+2028 US Presidential Election
+  Slug: 2028-us-presidential-election
+  Markets: 12
+    - Will Trump win the 2028 presidential election? (YES: $0.65)
+    - Will the Republican nominee win more than 300 electoral votes? (YES: $0.40)
+    - Will there be a third-party candidate in the 2028 election? (YES: $0.25)
+```
+
+**Example — JSON output**
+
+```bash
+polyclaw markets events --limit 2 --json
+```
+
+```json
+[
+  {
+    "id": "evt123...",
+    "title": "2028 US Presidential Election",
+    "slug": "2028-us-presidential-election",
+    "markets": [
+      {
+        "id": "abc123...",
+        "question": "Will Trump win the 2028 presidential election?",
+        "yes": "$0.65",
+        "no": "$0.35",
+        "volume_24h": "$1.2M",
+        "volume_total": "$8.5M"
+      }
+    ]
+  }
+]
+```

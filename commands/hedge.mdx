@@ -1,0 +1,182 @@
+---
+title: "polyclaw hedge — Discover Hedging Opportunities with LLM"
+sidebarTitle: "hedge"
+description: "Scan Polymarket markets for LLM-analyzed hedging opportunities using contrapositive logical implication. Coverage tiers T1–T4 rank hedge quality from near-arbitrage to speculative."
+---
+
+`polyclaw hedge` finds pairs of Polymarket prediction markets where a **logically necessary** relationship exists between outcomes. Unlike correlation-based approaches, PolyClaw's hedge scanner only accepts implications that are definitionally or physically impossible to violate — not merely "likely". When such an implication exists, a covering portfolio can be constructed using contrapositive logic, producing a position that limits downside regardless of the outcome.
+
+<Warning>
+  Hedge discovery takes a few minutes because it sends one LLM call per market being scanned. With the default `--limit 20`, expect roughly 2–5 minutes depending on the model and API latency.
+</Warning>
+
+## `polyclaw hedge scan`
+
+Scans a set of Polymarket markets for hedging opportunities by asking an LLM to identify logically necessary relationships.
+
+**Full usage**
+
+```bash
+polyclaw hedge scan [--query Q] [--limit N] [--min-coverage F] [--tier N] [--model M] [--json]
+```
+
+**Flags**
+
+<ParamField query="--query Q" type="string">
+  Filter markets by keyword before scanning. Uses `markets search` instead of `markets trending`. Pass a quoted phrase to narrow the topic (e.g. `--query "election"`).
+</ParamField>
+
+<ParamField query="--limit N" type="integer" default="20">
+  Number of markets to fetch and scan. Each market becomes a target and all others are candidates for cover relationships.
+</ParamField>
+
+<ParamField query="--min-coverage F" type="float" default="0.85">
+  Minimum coverage threshold (0.0–1.0). Portfolios below this threshold are discarded before output. The default of `0.85` filters out Tier 4 (LOW) results.
+</ParamField>
+
+<ParamField query="--tier N" type="integer" default="2">
+  Maximum tier number to include. `1` = T1 only, `2` = T1 + T2, `3` = T1 + T2 + T3, etc. Tiers are assigned based on coverage percentage.
+</ParamField>
+
+<ParamField query="--model M" type="string" default="nvidia/nemotron-nano-9b-v2:free">
+  OpenRouter model ID to use for implication analysis. See the [model selection note](#model-selection) below.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  Output results as a JSON array instead of the formatted table. Progress messages are written to stderr regardless.
+</ParamField>
+
+---
+
+### How it works
+
+<Steps>
+  <Step title="Fetch markets">
+    PolyClaw fetches markets from Polymarket Gamma API — either trending (default) or search-filtered if `--query` is set.
+  </Step>
+  <Step title="LLM implication extraction">
+    For each market (the "target"), all other fetched markets are sent to the LLM with a strict logical implication prompt. The model is instructed to find **only** relationships where one event outcome logically guarantees another — correlations, likelihoods, and political predictions are explicitly rejected. The model must also attempt to construct a counterexample for each relationship; if a counterexample exists, the relationship is excluded.
+  </Step>
+  <Step title="Contrapositive derivation">
+    From the LLM's `implied_by` and `implies` lists, PolyClaw derives cover positions using contrapositive logic:
+    - **`implied_by` (other → target):** contrapositive gives a YES cover (buy NO on the other market)
+    - **`implies` (target → other):** direct relationship gives a NO cover (buy YES on the other market)
+  </Step>
+  <Step title="Coverage calculation and tier assignment">
+    Each portfolio's coverage is computed as `p_target + p_not_target × cover_probability`, where `cover_probability` is set to `0.98` for necessary implications. Portfolios are classified into T1–T4 based on the result.
+  </Step>
+  <Step title="Filter and output">
+    Results below `--min-coverage` or above `--tier` are dropped. Remaining portfolios are sorted by coverage descending.
+  </Step>
+</Steps>
+
+---
+
+### Example
+
+```bash
+polyclaw hedge scan --query "election" --limit 10 --tier 1
+```
+
+---
+
+## `polyclaw hedge analyze <id1> <id2>`
+
+Analyzes a specific pair of markets for hedging relationships in both directions.
+
+**Usage**
+
+```bash
+polyclaw hedge analyze <market_id_1> <market_id_2> [--min-coverage F] [--model M] [--json]
+```
+
+**Parameters**
+
+<ParamField path="market_id_1" type="string" required>
+  First market ID.
+</ParamField>
+
+<ParamField path="market_id_2" type="string" required>
+  Second market ID.
+</ParamField>
+
+**Flags**
+
+<ParamField query="--min-coverage F" type="float" default="0.85">
+  Minimum coverage threshold for a portfolio to be included.
+</ParamField>
+
+<ParamField query="--model M" type="string" default="nvidia/nemotron-nano-9b-v2:free">
+  OpenRouter model ID.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  Output as a JSON array.
+</ParamField>
+
+Both directions are checked (market 1 as target with market 2 as cover, and vice versa). If no relationship is found above the coverage threshold, a clear message is printed explaining the likely reasons (no logical implication, or only correlation).
+
+**Example**
+
+```bash
+polyclaw hedge analyze market-abc market-xyz
+```
+
+When a relationship is found in table mode, the output includes a `Relationships:` section that prints the explanation returned by the LLM for each portfolio.
+
+---
+
+## Output format
+
+### Table
+
+```
+Tier   Cov    Cost   Target                                          | Cover
+------------------------------------------------------------------------
+T1  97.5%  $0.52  YES@0.45 Will war start in region X?...           | NO@0.07 Will peace talks succeed?...
+```
+
+| Column | Description |
+|--------|-------------|
+| `Tier` | T1–T3 coverage tier label |
+| `Cov` | Coverage percentage (higher is better) |
+| `Cost` | Total combined cost of target + cover positions ($1 each) |
+| `Target` | Side and price for the target position + truncated question |
+| `Cover` | Side and price for the covering position + truncated question |
+
+### JSON
+
+Each element in the JSON array is a portfolio object with fields including `tier`, `coverage`, `total_cost`, `target_position`, `target_price`, `target_question`, `cover_position`, `cover_price`, `cover_question`, and `relationship`.
+
+---
+
+## Coverage tiers
+
+<CardGroup cols={2}>
+  <Card title="T1 HIGH — ≥95%" icon="shield-check">
+    Near-arbitrage quality. The logical relationship is extremely tight. Very low residual risk. These are the highest-confidence hedges PolyClaw can find.
+  </Card>
+  <Card title="T2 GOOD — 90–95%" icon="shield">
+    Strong hedge with a small residual gap. Suitable for most risk-managed positions. Included by default (`--tier 2`).
+  </Card>
+  <Card title="T3 MODERATE — 85–90%" icon="shield-half">
+    Decent hedge but with a noticeable coverage gap. Requires more careful position sizing. Excluded by default; include with `--tier 3`.
+  </Card>
+  <Card title="T4 LOW — <85%" icon="circle-exclamation">
+    Speculative coverage. Filtered out by the `--min-coverage 0.85` default. Only visible if you lower `--min-coverage` manually.
+  </Card>
+</CardGroup>
+
+---
+
+## Model selection
+
+<Note>
+  Model quality matters significantly for hedge discovery. The scan prompt is designed to be strict, but some models still return false positives (spurious correlations) or fail to produce parseable output.
+
+  - **Default (`nvidia/nemotron-nano-9b-v2:free`)** — works well; good balance of strictness and output format compliance
+  - **Models with reasoning fields** (e.g. DeepSeek R1) — may return the response in a `reasoning_content` field rather than the standard `content` field, causing JSON parse failures
+  - **Smaller or less capable models** — may find spurious correlations, inflating the result count with low-quality hedges
+
+  Override with `--model <model_id>` to experiment. Model IDs follow the OpenRouter format (e.g. `openai/gpt-4o`, `anthropic/claude-3-5-haiku`).
+</Note>

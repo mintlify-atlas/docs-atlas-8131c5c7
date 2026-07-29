@@ -1,0 +1,185 @@
+---
+title: "Use PolyClaw with OpenClaw Natural Language Commands"
+sidebarTitle: "OpenClaw Integration"
+description: "Control PolyClaw through OpenClaw using natural language prompts. Browse markets, execute trades, scan for hedges, and check positions by chatting with Claude."
+---
+
+PolyClaw is designed as an OpenClaw skill, which means you can control all trading operations through natural language prompts in Claude instead of typing CLI commands.
+
+## What is OpenClaw?
+
+OpenClaw is a Claude-based automation framework that routes natural language requests to registered skills. When PolyClaw is installed, it registers itself as the `polyclaw` skill with the 🦞 emoji, and Claude learns to translate your plain-English requests into the correct CLI invocations behind the scenes.
+
+Before using PolyClaw through OpenClaw, make sure you have:
+
+- `uv` binary installed and available on your `PATH`
+- `CHAINSTACK_NODE` environment variable set (Polygon RPC URL)
+- `POLYCLAW_PRIVATE_KEY` environment variable set (your EVM private key)
+
+## Example prompts
+
+<AccordionGroup>
+  <Accordion title="Browse trending markets">
+    Ask Claude:
+
+    > "What's trending on Polymarket?"
+
+    PolyClaw will query the Gamma API and return a formatted table of market IDs, questions, YES/NO prices, and 24-hour volume — giving you the market IDs you need for follow-up commands.
+  </Accordion>
+
+  <Accordion title="Get market details">
+    Ask Claude:
+
+    > "Show me details for market &lt;market_id&gt;"
+
+    Returns full market info including the question text, current YES and NO prices, volume, and a direct link to the market on polymarket.com.
+  </Accordion>
+
+  <Accordion title="Check your wallet">
+    Ask Claude:
+
+    > "What's my PolyClaw wallet balance?"
+
+    Shows your wallet address, POL balance (used for gas), pUSD balance (trading collateral), and USDC.e balance. If you have USDC.e but no pUSD, you need to wrap it via the Collateral Onramp contract before trading.
+  </Accordion>
+
+  <Accordion title="Buy a position">
+    Ask Claude:
+
+    > "Buy $50 YES on market &lt;market_id&gt;"
+
+    PolyClaw executes the full split + CLOB flow: it splits $50 pUSD into YES and NO tokens via the CTF contract, then sells the NO tokens on the CLOB order book to recover partial cost. The resulting YES position is recorded in your local positions file.
+  </Accordion>
+
+  <Accordion title="Discover hedging opportunities">
+    Ask Claude:
+
+    > "Find me some hedging opportunities on Polymarket"
+
+    or, more specifically:
+
+    > "Run hedge scan limit 10"
+
+    This triggers the full LLM hedge scan, which fetches open markets and sends pairs to the language model for logical implication analysis. **This takes a few minutes.** Results are returned as a table of coverage tiers and market pairs:
+
+    - **T1** — ≥95% coverage (near-arbitrage)
+    - **T2** — 90–95% coverage (strong hedges)
+    - **T3** — 85–90% coverage (moderate risk)
+  </Accordion>
+
+  <Accordion title="Check your positions">
+    Ask Claude:
+
+    > "Show my PolyClaw positions"
+
+    Lists all open positions with entry price, current price, and unrealized P&L. Positions are read from `~/.openclaw/polyclaw/positions.json`.
+  </Accordion>
+
+  <Accordion title="Sell a position early">
+    Ask Claude:
+
+    > "Sell my YES position on market &lt;market_id&gt;"
+
+    Sells your tokens on the CLOB order book at the current market price, using a FOK (Fill or Kill) order placed 10% below the last price to match available buy orders.
+  </Accordion>
+</AccordionGroup>
+
+## Full example trading flow
+
+<Steps>
+  <Step title="Discover markets">
+    Ask: **"What's trending on Polymarket?"**
+
+    Copy the market IDs from the response — you'll need them for the next steps.
+  </Step>
+
+  <Step title="Run a hedge scan">
+    Ask: **"Run hedge scan limit 10"**
+
+    Wait a few minutes while the LLM analyzes pairs for logical implication relationships. When it finishes, you'll see a ranked table of hedge opportunities with coverage tiers.
+  </Step>
+
+  <Step title="Review coverage tiers">
+    Look for T1 (≥95%) and T2 (90–95%) opportunities. Each row shows the target market, the covering market, the combined cost, and the coverage percentage. Higher coverage means less residual risk.
+  </Step>
+
+  <Step title="Take the target position">
+    Ask: **"Buy $25 YES on market abc123"**
+
+    PolyClaw executes the split + CLOB trade and records the position.
+  </Step>
+
+  <Step title="Take the covering position">
+    Ask: **"Buy $25 NO on market xyz789"**
+
+    This is the hedge leg. Together, the two positions form a portfolio that is covered in most resolution scenarios.
+  </Step>
+
+  <Step title="Verify your entries">
+    Ask: **"Show my PolyClaw positions"**
+
+    Confirm both positions are recorded with the correct entry prices. Track P&L as the markets resolve.
+  </Step>
+</Steps>
+
+## Installation as an OpenClaw skill
+
+Install PolyClaw from ClawHub and sync its Python dependencies:
+
+```bash
+clawhub install polyclaw
+cd ~/.openclaw/skills/polyclaw
+uv sync
+```
+
+Then add the skill configuration to your `openclaw.json`:
+
+```json
+"polyclaw": {
+  "enabled": true,
+  "env": {
+    "CHAINSTACK_NODE": "https://polygon-mainnet.core.chainstack.com/YOUR_KEY",
+    "POLYCLAW_PRIVATE_KEY": "0x...",
+    "OPENROUTER_API_KEY": "sk-or-v1-..."
+  }
+}
+```
+
+Where to get each key:
+
+- **Chainstack node** — [Sign up at Chainstack](https://console.chainstack.com) (free tier available, sign up with GitHub, X, or Google)
+- **OpenRouter API key** — [Create a key at OpenRouter](https://openrouter.ai/settings/keys)
+
+Before your first trade, run the one-time approval setup (costs ~0.01 POL in gas):
+
+```bash
+uv run python scripts/polyclaw.py wallet approve
+```
+
+## Skill metadata
+
+PolyClaw's `SKILL.md` manifest declares it to OpenClaw with the following metadata:
+
+```yaml
+name: polyclaw
+description: "Trade on Polymarket via split + CLOB execution. Browse markets, track positions with P&L, discover hedges via LLM. Polygon/Web3."
+```
+
+| Field | Value |
+|---|---|
+| Emoji | 🦞 |
+| Homepage | https://polymarket.com |
+| Primary env | `POLYCLAW_PRIVATE_KEY` |
+| Required binaries | `uv` |
+| Required env vars | `CHAINSTACK_NODE`, `POLYCLAW_PRIVATE_KEY` |
+
+<Note>
+  PolyClaw CLI also works independently without OpenClaw. Export the environment variables directly in your shell and run commands with `uv run python scripts/polyclaw.py <command>` — for example:
+
+  ```bash
+  export POLYCLAW_PRIVATE_KEY="0x..."
+  export CHAINSTACK_NODE="https://polygon-mainnet.core.chainstack.com/YOUR_KEY"
+  uv run python scripts/polyclaw.py markets trending
+  uv run python scripts/polyclaw.py buy <market_id> YES 50
+  ```
+</Note>

@@ -1,72 +1,70 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "PolyClaw",
+  "theme": "luma",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#047cfc",
+    "light": "#79bcfc",
+    "dark": "#047cfc"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/2d566b94-e7fd-4c98-843b-cf548191c376.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/79e98db4-3bdc-427f-ab12-f487b8616c41.svg",
+    "dark": "https://media.brand.dev/79e98db4-3bdc-427f-ab12-f487b8616c41.svg"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/deniszidbaev-cmyk/polyclaw-cmyk"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/deniszidbaev-cmyk/polyclaw-cmyk"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Command Reference",
+            "pages": [
+              "commands/markets",
+              "commands/wallet",
+              "commands/trading",
+              "commands/positions",
+              "commands/hedge",
+              "commands/redeem"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/trading-flow",
+              "concepts/hedge-discovery",
+              "concepts/contracts"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/openclaw-integration",
+              "guides/proxy-setup",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

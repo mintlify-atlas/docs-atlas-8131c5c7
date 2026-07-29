@@ -1,0 +1,138 @@
+---
+title: "polyclaw buy — Execute YES and NO Position Trades"
+sidebarTitle: "buy"
+description: "Buy YES or NO positions on Polymarket markets using the split + CLOB V2 execution flow. Splits pUSD into outcome tokens and sells the unwanted side on the order book."
+---
+
+`polyclaw buy` executes trades on Polymarket using the Conditional Token Framework (CTF) split mechanism followed by a CLOB (Central Limit Order Book) sell. Instead of purchasing tokens directly, it deposits pUSD into the CTF contract to mint an equal quantity of YES and NO tokens, then sells the side you don't want via a Fill-or-Kill order on the Polymarket order book. The result is a directional position at the market price, with partial cost recovery from selling the unwanted side.
+
+## `polyclaw buy <market_id> YES|NO <amount>`
+
+**Full usage**
+
+```bash
+polyclaw buy <market_id> YES|NO <amount> [--skip-sell] [--json]
+```
+
+**Parameters**
+
+<ParamField path="market_id" type="string" required>
+  Market ID from `polyclaw markets trending`, `polyclaw markets search`, or the Polymarket URL slug.
+</ParamField>
+
+<ParamField path="YES|NO" type="string" required>
+  Which outcome to purchase. Case-insensitive (`yes` and `no` are also accepted).
+</ParamField>
+
+<ParamField path="amount" type="float" required>
+  Amount in USD to spend. This exact number of pUSD tokens is deposited into the CTF contract: $50 becomes 50 YES + 50 NO tokens. Your wallet must hold at least this much pUSD.
+</ParamField>
+
+**Flags**
+
+<ParamField query="--skip-sell" type="boolean">
+  Skip the CLOB sell step entirely. Both YES and NO tokens will remain in your wallet after the split. Useful if you want to hold both sides, run your own sell logic, or if CLOB liquidity is thin.
+</ParamField>
+
+<ParamField query="--json" type="boolean">
+  After the human-readable summary, output the full trade result as a JSON object.
+</ParamField>
+
+---
+
+### How it works
+
+<Steps>
+  <Step title="Fetch market info">
+    PolyClaw calls the Gamma API to retrieve the `condition_id`, YES/NO token IDs, and current prices for the requested market.
+  </Step>
+  <Step title="Check pUSD balance">
+    The wallet's pUSD balance is verified. If it's less than `amount`, the trade is aborted with an error message showing your current balance and a hint to wrap USDC.e if needed.
+  </Step>
+  <Step title="Split position on-chain">
+    A `splitPosition` call is sent to the CTF contract (`0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`), depositing `amount` pUSD and minting an equal number of YES and NO tokens (1 token per $1).
+  </Step>
+  <Step title="Sell unwanted side via CLOB">
+    Unless `--skip-sell` is set, a Fill-or-Kill (FOK) sell order is placed on the Polymarket CLOB at approximately 10% below the current market price for the unwanted side. If filled, the proceeds partially offset your cost basis.
+  </Step>
+  <Step title="Record position locally">
+    On success the position is written to `~/.openclaw/polyclaw/positions.json` for tracking via `polyclaw positions`.
+  </Step>
+</Steps>
+
+---
+
+### Example
+
+```bash
+polyclaw buy abc123 YES 50
+```
+
+```
+Market: Will X happen by end of year?
+Buying: YES @ 0.65
+Will sell: NO @ ~0.35
+Split TX submitted: 0xabc...
+Split confirmed in block 12345678
+Selling unwanted tokens via CLOB...
+CLOB sell filled: 0xc93d621...
+
+==================================================
+Trade executed successfully!
+  Market: Will X happen by end of year?...
+  Position: YES
+  Amount: $50.00
+  Split TX: 0xabc...
+  CLOB Order: 0xc93d621... (FILLED)
+  Position ID: a1b2c3d4...
+```
+
+---
+
+### Trade result JSON fields
+
+When using `--json`, the following object is printed after the human-readable summary:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | bool | `true` if the split succeeded (even if CLOB sell failed) |
+| `market_id` | string | The market ID that was traded |
+| `position` | string | `"YES"` or `"NO"` |
+| `amount` | float | USD amount deposited |
+| `split_tx` | string | On-chain transaction hash of the `splitPosition` call |
+| `clob_order_id` | string \| null | Polymarket CLOB order identifier (see note below) |
+| `clob_filled` | bool | Whether the FOK sell order was matched |
+| `error` | string \| null | CLOB error message if sell failed, or `null` |
+| `question` | string | Full market question text |
+| `wanted_token_id` | string | ERC-1155 token ID for the side you purchased |
+| `entry_price` | float | Market price at time of trade |
+| `condition_id` | string | CTF condition ID |
+
+<Note>
+  **CLOB order IDs are not blockchain transaction hashes.** An ID like `0xc93d6214515b2436...` is an off-chain Polymarket order book identifier. CLOB orders are matched off-chain and settled in batches on-chain. There is no public block explorer for CLOB order IDs. To see your trade history, connect your wallet at polymarket.com → Portfolio → Activity.
+</Note>
+
+<Warning>
+  **If the CLOB sell fails, your split already succeeded.** The pUSD has been deposited and both YES and NO tokens are in your wallet. A CLOB failure (e.g. Cloudflare IP block or no liquidity) does not reverse the split. You can sell the unwanted tokens manually on polymarket.com, or use a residential proxy (`HTTPS_PROXY`) with `CLOB_MAX_RETRIES` to retry.
+</Warning>
+
+<Tip>
+  Use `--skip-sell` if you want to hold both YES and NO tokens, run your own sell strategy at a better price, or avoid the Cloudflare CLOB issue entirely. Your cost basis will be the full `amount` with no recovery from the unwanted side.
+</Tip>
+
+---
+
+### Understanding the split mechanism
+
+Polymarket uses the **Conditional Token Framework (CTF)** — you cannot purchase outcome tokens directly. The flow is always:
+
+```
+$2 pUSD  →  splitPosition()  →  2 YES tokens + 2 NO tokens
+                                        ↓
+                              sell 2 NO @ $0.35  →  recover ~$0.63
+                                        ↓
+                              net cost: ~$1.37 for 2 YES tokens
+                              effective entry price: ~$0.685
+```
+
+The effective entry price you pay is slightly higher than the quoted market price because the FOK sell uses a 10% discount on the unwanted side's price to ensure fill.

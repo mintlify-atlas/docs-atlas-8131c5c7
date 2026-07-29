@@ -1,0 +1,150 @@
+---
+title: "LLM Hedge Discovery: Contrapositive Logic and Coverage Tiers"
+sidebarTitle: "Hedge Discovery"
+description: "PolyClaw uses LLM-powered contrapositive logical implication to find covering portfolios on Polymarket. Coverage tiers T1–T4 quantify hedge quality from near-arbitrage to speculative."
+---
+
+PolyClaw's hedge scanner uses an LLM to find pairs of Polymarket markets where one outcome logically guarantees another — creating covering portfolios where at least one position pays out. The key word is *logically*: the scanner rejects correlations and likelihood language entirely. Only relationships that hold by definition or physical law make it through.
+
+## What is a covering portfolio?
+
+A covering portfolio is two positions across two different markets where the combined cost is less than $1 and at least one of the positions is guaranteed to pay $1 if the other fails.
+
+**Example — geopolitical pair:**
+
+| Position | Market | Price |
+|----------|--------|-------|
+| Buy YES | "City X captured by end of year" | $0.45 |
+| Buy NO | "Peace talks succeed before year end" | $0.07 |
+| **Total cost** | | **$0.52** |
+
+If the city **is** captured → YES pays $1.00 → **profit $0.48**.
+
+If the city is **not** captured, the contrapositive of the underlying implication tells us that peace talks almost certainly succeed → NO loses. However, if the logical relationship is that "city captured → peace talks failed" (by definition, you can't capture a city while peace talks are succeeding), then the NO position would pay out instead.
+
+The covering portfolio earns a guaranteed profit whenever at least one leg fires, and loses only in the narrow scenario where both positions lose simultaneously.
+
+## Contrapositive logic
+
+The LLM is prompted to find only **logically necessary** relationships — not correlations, not likelihoods, not "usually" relationships.
+
+**Definition:** A → B means "if A is YES, B MUST be YES by definition or physical law." There must be zero possible scenarios where A=YES and B=NO — not merely unlikely, but logically impossible.
+
+**Valid examples included by the scanner:**
+
+- `"election held"` → `"election called"` — you cannot hold an election that was never called. Definitional impossibility.
+- `"city captured"` → `"military operation in city"` — physical law: you cannot capture without entering.
+- `"person dies"` → `"person was alive"` — death requires prior life by definition.
+
+**Rejected examples (the scanner explicitly excludes these):**
+
+- `"war started"` → `"peace talks failed"` — wars can start without formal talks. Correlation.
+- `"election called"` → `"election held"` — elections can be cancelled. Not necessary.
+- `"candidate wins primary"` → `"candidate wins general"` — they can lose the general. Not necessary.
+- `"ceasefire broken"` → `"war escalates"` — it could also de-escalate. Speculative.
+
+For every proposed relationship, the LLM is required to attempt a counterexample: *"Can I imagine ANY scenario where A=YES and B=NO?"* If any such scenario exists — even a contrived or unlikely one — the relationship is rejected. The scanner is tuned for false-negative tolerance: most market pairs will return empty results, and that is correct behaviour.
+
+## How implications become cover positions
+
+The LLM returns a structured JSON object with two lists — `implied_by` (other → target) and `implies` (target → other). PolyClaw converts each into a concrete buy-and-cover pair using the contrapositive:
+
+**Direction 1 — `implied_by` (other → target):**
+
+If `other=YES` implies `target=YES`, then by contrapositive, `target=NO` implies `other=NO`. This means:
+- If you buy **target=YES**, you are covered by **other=NO**
+- The cover fires whenever the target position loses (target=NO), because that forces other=NO
+
+**Direction 2 — `implies` (target → other):**
+
+If `target=YES` implies `other=YES`, then:
+- If you buy **target=NO**, you are covered by **other=YES**
+- The cover fires whenever the target position loses (target=YES resolves), because that forces other=YES
+
+```json
+{
+  "implied_by": [
+    {
+      "market_id": "abc123",
+      "market_question": "Will the election be called before Q3?",
+      "explanation": "Cannot hold election without calling it — definitional necessity",
+      "counterexample_attempt": "I tried to imagine a held election without a call, impossible by definition"
+    }
+  ],
+  "implies": []
+}
+```
+
+## Coverage formula
+
+Once the logical relationship is confirmed, PolyClaw calculates a numeric coverage score using the market prices as probability estimates:
+
+```
+Coverage = P(target wins) + P(target loses) × P(cover fires | target loses)
+```
+
+Where:
+- `P(target wins)` = the market price of the target position (e.g., $0.80)
+- `P(target loses)` = `1 − target_price` (e.g., $0.20)
+- `P(cover fires | target loses)` = `NECESSARY_PROBABILITY = 0.98` for logically necessary relationships
+
+The value 0.98 rather than 1.00 accounts for the small residual risk that even a logically necessary relationship could be violated by an unexpected market resolution (e.g., the oracle reports incorrectly, or the question resolves on a technicality).
+
+**Worked example:**
+
+| Parameter | Value |
+|-----------|-------|
+| Target position price | $0.80 |
+| Cover position price | $0.15 |
+| Total cost | $0.95 |
+| Coverage | 0.80 + 0.20 × 0.98 = **99.6%** |
+| Expected profit | $0.996 − $0.95 = **+$0.046** |
+
+## Coverage tiers
+
+PolyClaw classifies every covering portfolio into one of four tiers:
+
+| Tier | Label | Coverage threshold | Description |
+|------|-------|--------------------|-------------|
+| T1 | HIGH | ≥ 95% | Near-arbitrage; very strong logical relationship |
+| T2 | GOOD | 90–95% | Strong hedge with small residual risk |
+| T3 | MODERATE | 85–90% | Decent hedge with noticeable gap |
+| T4 | LOW | < 85% | Speculative; filtered out by default |
+
+By default, `polyclaw hedge scan` only shows T1 and T2 results (`--tier 2`). You can lower the filter:
+
+```bash
+# Show T1 and T2 only (default)
+polyclaw hedge scan --limit 20
+
+# Show T1, T2, and T3
+polyclaw hedge scan --limit 20 --tier 3
+
+# Custom minimum coverage
+polyclaw hedge scan --limit 20 --min-coverage 0.90
+```
+
+## LLM prompt design
+
+The implication prompt in `scripts/hedge.py` is carefully constrained to prevent hallucination of spurious correlations. Key design choices:
+
+- **Explicit prohibition list** — The prompt lists specific counter-examples of relationships that look like implications but are not (political outcomes, social predictions, causal chains with alternative explanations).
+- **Mandatory counterexample test** — Every relationship the LLM proposes must include a `counterexample_attempt` field explaining why the violating scenario is logically impossible. If the LLM cannot articulate a strong impossibility argument, it is instructed to omit the relationship.
+- **Structured JSON output** — The response must conform exactly to `{"implied_by": [...], "implies": [...]}`. PolyClaw's parser handles markdown code block wrappers and embedded JSON, but a malformed response returns no results rather than a crash.
+- **Low temperature** — LLM calls use `temperature=0.1` to reduce creative/hallucinated outputs.
+- **Default model** — `nvidia/nemotron-nano-9b-v2:free` via OpenRouter. This model follows the JSON format correctly and applies the counterexample test reliably.
+
+<Warning>
+  Some LLMs hallucinate correlations as implications or return empty responses due to non-standard output formats (for example, DeepSeek R1 places its answer in `reasoning_content` rather than `content`). If the scan returns suspicious results or zero results for markets that should have clear relationships, try specifying the default model explicitly: `--model nvidia/nemotron-nano-9b-v2:free`.
+</Warning>
+
+## Limitations
+
+- **Narrow applicability** — The scanner only works for market pairs with definitional or physical necessity. Most open Polymarket questions involve human decisions and political outcomes, which rarely satisfy the counterexample test. Empty results are expected and correct.
+- **Speed** — Each market in the scan generates one LLM API call. A 20-market scan takes several minutes. Use `--query` to narrow the search to a specific topic.
+- **Model dependence** — Hedge quality is only as good as the LLM's logical reasoning. Always review the `relationship` field in the output before trading.
+- **Price staleness** — Coverage is calculated from prices at scan time. By the time you execute, prices may have moved and the expected profit may be lower or negative.
+
+<Warning>
+  Hedge discovery results are not financial advice. Logical relationships identified by LLMs may be incorrect — the model may have missed a valid counterexample or misread the market question. Always verify the logical relationship yourself before placing any trade.
+</Warning>

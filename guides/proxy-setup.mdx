@@ -1,0 +1,122 @@
+---
+title: "Configure a Rotating Proxy for Polymarket CLOB Access"
+sidebarTitle: "Proxy Setup"
+description: "Set up a rotating residential proxy to bypass Cloudflare protection on Polymarket's CLOB API. Required when POST requests fail with 403 errors from datacenter or blocked IPs."
+---
+
+Polymarket's CLOB API uses Cloudflare protection that blocks POST requests from many IPs — including datacenter IPs and some residential ISPs. This affects the "sell unwanted tokens" step in every trade, which is where your pUSD split has already succeeded on-chain but the CLOB order cannot be submitted.
+
+## When do you need a proxy?
+
+You need a proxy if `polyclaw buy` consistently fails at the CLOB sell step with a message like `IP blocked by Cloudflare` or an HTTP 403 error. Specifically:
+
+- The `splitPosition` step is an **on-chain transaction** sent directly to your Chainstack RPC — it is **not** affected by Cloudflare blocking.
+- The CLOB sell step is an **off-chain POST request** to `clob.polymarket.com` — this is what Cloudflare blocks.
+- Any datacenter IP range is blocked. Some residential ISPs are also flagged.
+
+<Warning>
+  If you see a Cloudflare block error, your split has **already succeeded** — you hold the tokens. Only the CLOB sell step failed. You can sell the unwanted tokens manually on polymarket.com rather than losing them.
+</Warning>
+
+## Recommended setup
+
+<Steps>
+  <Step title="Get a rotating residential proxy">
+    You need a **residential** proxy service with a **rotating IP** feature so that each new request comes from a different IP address. Datacenter proxies will not work — Cloudflare blocks those too.
+
+    Recommended services:
+
+    | Service | Endpoint example | Notes |
+    |---|---|---|
+    | IPRoyal | `geo.iproyal.com:12321` | Rotating residential, pay-as-you-go |
+    | BrightData | varies | Enterprise-grade |
+    | Oxylabs | varies | Enterprise-grade |
+    | Smartproxy | varies | Good residential pool |
+
+    The rotating feature is essential: each time the CLOB client retries, it creates a fresh HTTP connection that picks up a new residential IP from the proxy pool.
+  </Step>
+
+  <Step title="Set the environment variables">
+    Export `HTTPS_PROXY` and optionally increase `CLOB_MAX_RETRIES`:
+
+    ```bash
+    export HTTPS_PROXY="http://user:pass@geo.iproyal.com:12321"
+    export CLOB_MAX_RETRIES=10
+    ```
+
+    Or set them in your `openclaw.json` under the polyclaw skill's `env` block:
+
+    ```json
+    "env": {
+      "HTTPS_PROXY": "http://user:pass@geo.iproyal.com:12321",
+      "CLOB_MAX_RETRIES": "10"
+    }
+    ```
+  </Step>
+
+  <Step title="Test the setup">
+    First verify your wallet is reachable, then attempt a small buy:
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet status
+    uv run python scripts/polyclaw.py buy <market_id> YES 5
+    ```
+
+    With the proxy configured, the CLOB client will retry up to `CLOB_MAX_RETRIES` times. On each retry a new HTTP client is created, which — thanks to the rotating proxy — requests from a fresh residential IP. The trade typically succeeds within 5–10 attempts.
+  </Step>
+</Steps>
+
+## How the retry logic works
+
+The CLOB client in `lib/clob_client.py` implements the following behavior:
+
+- **`CLOB_MAX_RETRIES`** (default: `5`) — maximum number of POST attempts per CLOB order.
+- On each retry (attempt > 0), `_refresh_http_client()` closes the existing `httpx.Client` and creates a new one. With a rotating proxy, the new client's first request comes from a different residential IP.
+- A brief 1-second pause is inserted between retries to avoid hammering the endpoint.
+- **Only Cloudflare 403 errors trigger retries.** Other errors — no liquidity at the sell price, malformed orders, authentication failures — cause an immediate failure without retrying.
+
+```
+Attempt 1  →  IP A  →  403 Cloudflare  →  refresh client
+Attempt 2  →  IP B  →  403 Cloudflare  →  refresh client
+Attempt 3  →  IP C  →  200 OK          →  order placed ✓
+```
+
+<Tip>
+  Setting `CLOB_MAX_RETRIES=10` is a good starting point. Most users succeed within 5–10 attempts when using a rotating residential proxy pool of reasonable size.
+</Tip>
+
+## Alternative workarounds
+
+If you'd rather not set up a proxy, two options let you keep the on-chain split while skipping the CLOB sell:
+
+**Option 1 — Use `--skip-sell`**
+
+Pass `--skip-sell` to keep both YES and NO tokens after the split. You can then sell the unwanted side manually on polymarket.com at your convenience:
+
+```bash
+uv run python scripts/polyclaw.py buy <market_id> YES 50 --skip-sell
+```
+
+**Option 2 — Sell manually on polymarket.com**
+
+If the CLOB sell already failed but the split succeeded, you still hold both token types. Navigate to polymarket.com → Portfolio, locate your position, and sell the unwanted side through the UI.
+
+## `HTTPS_PROXY` format reference
+
+The proxy URL must follow this format:
+
+```
+http://username:password@hostname:port
+```
+
+Example with IPRoyal:
+
+```
+http://myuser:mypass@geo.iproyal.com:12321
+```
+
+Most residential proxy providers give you a username, password, hostname, and port when you create a proxy endpoint in their dashboard. Paste the full string (including the `http://` scheme) as the value of `HTTPS_PROXY`.
+
+<Note>
+  The proxy is only used for CLOB POST requests routed through `httpx`. The `splitPosition` on-chain transaction is submitted via your Chainstack RPC node directly and **bypasses `HTTPS_PROXY`** entirely — you don't need the proxy to be active for on-chain operations.
+</Note>

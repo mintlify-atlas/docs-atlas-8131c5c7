@@ -1,0 +1,134 @@
+---
+title: "polyclaw redeem — Claim Collateral from Resolved Markets"
+sidebarTitle: "redeem"
+description: "List resolved Polymarket positions pending redemption, claim pUSD collateral from winning positions by calling redeemPositions on the CTF contract, or sweep all at once."
+---
+
+When a Polymarket market resolves, holders of winning outcome tokens must call `redeemPositions` on the Conditional Token Framework (CTF) contract to exchange those tokens back for pUSD collateral. Polymarket's website auto-redeems positions placed through its UI — but positions opened via `polyclaw buy` (direct contract calls) are invisible to that auto-redeemer. You must claim your collateral manually using these commands.
+
+<Tip>
+  Run `polyclaw positions` first — it fetches live market state and prints a reminder at the bottom if any of your positions are in resolved markets pending redemption.
+</Tip>
+
+## Requirements
+
+<CardGroup cols={2}>
+  <Card title="CHAINSTACK_NODE" icon="server">
+    Polygon RPC URL. Required for all redeem operations to query the CTF contract and submit transactions.
+  </Card>
+  <Card title="POLYCLAW_PRIVATE_KEY" icon="key">
+    Your EVM private key. Required for `redeem <id>` and `redeem all` to sign the `redeemPositions` transaction.
+  </Card>
+</CardGroup>
+
+Your wallet must also hold a small amount of POL to cover gas fees (~0.005 POL per redemption).
+
+---
+
+## `polyclaw redeem list`
+
+Shows all resolved positions that have not yet been redeemed.
+
+**Usage**
+
+```bash
+polyclaw redeem list [--json]
+```
+
+**Flags**
+
+<ParamField query="--json" type="boolean">
+  Output as a JSON array instead of the formatted table.
+</ParamField>
+
+PolyClaw checks each open position against the CTF contract on-chain to determine whether the condition has been resolved and reads the payout numerator/denominator for your side.
+
+**Example output**
+
+```
+ID         Side  Won    Share   Est. payout  Market
+------------------------------------------------------------------------------------------
+a1b2c3d4   YES   yes       1/1      $50.00   Will X happen by end of year?...
+e5f6g7h8   NO    no        0/1       $0.00   Will Y happen?...
+```
+
+**Output columns**
+
+| Column | Description |
+|--------|-------------|
+| `ID` | First 8 characters of the position UUID |
+| `Side` | `YES` or `NO` |
+| `Won` | `yes` if your outcome was the winner, `no` otherwise |
+| `Share` | Payout numerator/denominator from the CTF contract |
+| `Est. payout` | Estimated pUSD payout = `entry_amount × numerator / denominator` |
+| `Market` | Truncated market question |
+
+Losing positions are shown in the list (with `Won: no` and `$0.00` payout) because they exist in your position file. They are automatically skipped during redemption.
+
+---
+
+## `polyclaw redeem <position_id>`
+
+Redeems a single position by calling `redeemPositions` on the CTF contract.
+
+**Usage**
+
+```bash
+polyclaw redeem <position_id>
+```
+
+**Parameters**
+
+<ParamField path="position_id" type="string" required>
+  Position ID prefix (minimum 8 characters). If the prefix matches multiple positions, PolyClaw will ask you to be more specific.
+</ParamField>
+
+<Steps>
+  <Step title="Look up position and condition ID">
+    The position record is loaded from `~/.openclaw/polyclaw/positions.json`. If the `condition_id` is missing, it is back-filled from the Gamma API.
+  </Step>
+  <Step title="Verify resolution on-chain">
+    The CTF contract is queried for `payoutDenominator` and `payoutNumerators`. If the denominator is zero, the market has not resolved yet.
+  </Step>
+  <Step title="Check winning side">
+    If your side's payout numerator is zero (losing outcome), the redemption is skipped with a message.
+  </Step>
+  <Step title="Send redeemPositions transaction">
+    A `redeemPositions` call is sent to the CTF contract with the correct index set for your outcome (`1` for YES, `2` for NO). Gas cost is approximately 0.005 POL.
+  </Step>
+  <Step title="Mark redeemed locally">
+    On confirmation, the position status is updated to `resolved` and the transaction hash is saved in `redeem_tx`.
+  </Step>
+</Steps>
+
+---
+
+## `polyclaw redeem all`
+
+Sweeps every open position and attempts to redeem all winning resolved positions in one pass.
+
+**Usage**
+
+```bash
+polyclaw redeem all
+```
+
+Positions that are already redeemed, on losing sides, or in markets that haven't resolved yet are automatically skipped. At the end, a summary is printed:
+
+```
+Redeemed 1 of 3 candidates.
+```
+
+---
+
+## Why manual redemption is needed
+
+Polymarket's web application automatically redeems outcome tokens for positions you open through its UI. However, positions executed via `polyclaw buy` involve direct calls to the CTF and Exchange contracts — the UI has no awareness of them. As a result:
+
+- The auto-redeemer does **not** process your PolyClaw positions
+- Winning tokens sit in your wallet earning nothing until you redeem them
+- `polyclaw redeem` calls the same `redeemPositions` function the UI would call, returning pUSD to your wallet at the correct payout ratio
+
+<Note>
+  The Collateral Onramp migration on **2026-04-28** changed the redemption collateral from USDC.e to **pUSD**. All redemptions via `polyclaw redeem` return pUSD, which you can use directly for new trades or withdraw via any pUSD-compatible exchange route.
+</Note>

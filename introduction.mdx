@@ -1,0 +1,64 @@
+---
+title: "PolyClaw: Trading-Enabled Polymarket Skill for OpenClaw"
+sidebarTitle: "Introduction"
+description: "PolyClaw lets you browse Polymarket prediction markets, execute on-chain trades via split + CLOB, track positions with live P&L, and discover hedging opportunities with LLM analysis."
+---
+
+PolyClaw is a trading-enabled Polymarket skill for [OpenClaw](https://openclaw.dev) that brings the full Polymarket trading stack into a single CLI. Rather than juggling browser tabs, manual approvals, and bespoke scripts, PolyClaw gives you a unified command interface to browse prediction markets, execute on-chain YES/NO trades via Polymarket's split + CLOB V2 architecture, track open positions with live profit-and-loss, and surface hedging opportunities through LLM-powered logical-implication analysis — all on Polygon mainnet using pUSD as collateral.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Market Browsing" icon="chart-line">
+    Browse trending markets by 24-hour volume, search by keyword, and inspect full market details including current prices and question text.
+  </Card>
+  <Card title="On-Chain Trading" icon="ethereum">
+    Execute YES or NO trades via Polymarket's split + CLOB V2 flow on Polygon mainnet. Split pUSD into YES + NO tokens, then sell the unwanted side through the order book to arrive at your desired position.
+  </Card>
+  <Card title="Position Tracking" icon="table">
+    View all open positions in a single table with entry price, current market price, and live P&L. Positions are persisted locally in `~/.openclaw/polyclaw/positions.json`.
+  </Card>
+  <Card title="Hedge Discovery" icon="shield-halved">
+    Scan markets for covering portfolios using LLM-powered contrapositive logic. Only logically necessary implications are accepted — spurious correlations are rejected. Results are ranked by coverage tier (T1 ≥ 95%, T2 90–95%, T3 85–90%).
+  </Card>
+  <Card title="Collateral Redemption" icon="coins">
+    Claim pUSD collateral from resolved positions with `redeem list`, `redeem <position_id>`, or `redeem all` to sweep every redeemable position in one command.
+  </Card>
+  <Card title="OpenClaw Integration" icon="robot">
+    Registered as an OpenClaw skill with a full `SKILL.md` manifest. Invoke every command through natural-language prompts in the OpenClaw agent, or run the CLI standalone without OpenClaw at all.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+PolyClaw is a Python CLI skill distributed via [ClawHub](https://clawhub.dev) and managed with [uv](https://github.com/astral-sh/uv). It wraps the `py-clob-client-v2` library for CLOB order placement, uses `web3.py` to interact with the Polymarket Conditional Token Framework (CTF) contracts directly, and calls the Polymarket Gamma API for market discovery.
+
+Every trade follows the same two-step on-chain flow:
+
+1. **Split** — Deposit pUSD into the CTF contract, which mints equal amounts of YES and NO tokens.
+2. **Sell unwanted** — Sell the side you don't want via the CLOB order book (V2), recovering partial cost. The result is a clean directional position at the effective market price.
+
+The skill targets **Polygon mainnet, CLOB V2**, with **pUSD as collateral** (post-2026-04-28 cutover). If you hold USDC.e, it can be wrapped 1:1 into pUSD via the Collateral Onramp contract.
+
+## Standalone vs. OpenClaw Mode
+
+PolyClaw is designed as an OpenClaw skill but ships as a fully self-contained Python project. You can:
+
+- **OpenClaw mode** — Configure environment variables in `openclaw.json` and drive every feature through natural-language agent prompts.
+- **Standalone mode** — Export environment variables directly (or use a `.env` file in the skill root) and call `uv run python scripts/polyclaw.py <command>` from your terminal.
+
+Both modes use the same underlying CLI; only the environment injection and invocation path differ.
+
+## Disclaimer
+
+<Warning>
+  PolyClaw is provided as-is for **educational and experimental purposes**. It is not financial advice. Trading prediction markets involves real risk of loss. The code has not been audited. Use only with funds you can afford to lose entirely.
+
+  Keep only small amounts in the configured wallet at any time. Withdraw regularly to a secure wallet that is not exposed via an environment variable.
+</Warning>
+
+## Get Started
+
+<Card title="Quickstart →" icon="rocket" href="/quickstart">
+  Install PolyClaw, configure your keys, set contract approvals, and execute your first Polymarket trade in under 10 minutes.
+</Card>

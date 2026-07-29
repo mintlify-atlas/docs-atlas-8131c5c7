@@ -1,47 +1,196 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with PolyClaw: Install, Configure, and Trade"
+sidebarTitle: "Quickstart"
+description: "Install PolyClaw, configure your Chainstack RPC node and private key, set contract approvals, and execute your first Polymarket trade in under 10 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This page walks you through the complete PolyClaw onboarding flow: installing the skill, gathering the three keys you need, wiring them into your configuration, running the one-time contract approval step, and placing your first Polymarket trade. The whole process takes under ten minutes if you already have an EVM wallet.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Install PolyClaw">
+
+    PolyClaw is distributed via ClawHub and managed with [uv](https://github.com/astral-sh/uv). Make sure `uv` is available on your system before proceeding.
 
     ```bash
-    npm install your-package
+    brew install uv
     ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+    **Option A — ClawHub install (recommended)**
 
     ```bash
-    your-cli init
+    clawhub install polyclaw
+    cd ~/.openclaw/skills/polyclaw
+    uv sync
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+    **Option B — Manual install**
 
     ```bash
-    your-cli start
+    cp -r polyclaw ~/.openclaw/skills/
+    cd ~/.openclaw/skills/polyclaw
+    uv sync
     ```
+
+    `uv sync` resolves and installs all Python dependencies declared in `pyproject.toml` (including `web3`, `py-clob-client-v2`, `rich`, and `python-dotenv`) into an isolated virtual environment.
+
   </Step>
+
+  <Step title="Get Your Three Required Keys">
+
+    PolyClaw needs three credentials to function. Collect them all before moving on.
+
+    **Chainstack Polygon node (required for trading)**
+
+    PolyClaw sends all on-chain transactions through a dedicated Polygon mainnet RPC node.
+
+    1. Sign up at [console.chainstack.com](https://console.chainstack.com) — free tier available, sign up with GitHub, X, or Google.
+    2. Create a new project and deploy a **Polygon mainnet** node.
+    3. Copy the **HTTPS endpoint URL** (format: `https://polygon-mainnet.core.chainstack.com/YOUR_KEY`).
+
+    **OpenRouter API key (required for hedge commands)**
+
+    Hedge discovery sends market pairs to an LLM for logical-implication analysis via [OpenRouter](https://openrouter.ai).
+
+    1. Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys).
+    2. A free tier is available; no credit card required to start.
+
+    **EVM wallet private key (required for trading)**
+
+    PolyClaw signs all on-chain transactions with an EVM private key.
+
+    - Use a **dedicated wallet** — do not reuse a wallet that holds significant funds.
+    - Export the private key in hex format (with or without the `0x` prefix).
+    - Fund it with a small amount of POL (for gas) and pUSD (for collateral).
+
+    <Warning>
+      Keep only small amounts in this wallet at all times. The private key is stored as an environment variable for automation convenience — withdraw profits regularly to a separate, secure wallet.
+    </Warning>
+
+  </Step>
+
+  <Step title="Configure Environment Variables">
+
+    PolyClaw is configured entirely through environment variables. Choose the approach that matches how you are running it.
+
+    **OpenClaw users — `openclaw.json`**
+
+    Add the following block under `skills.entries` in your `openclaw.json`:
+
+    ```json
+    "polyclaw": {
+      "enabled": true,
+      "env": {
+        "CHAINSTACK_NODE": "https://polygon-mainnet.core.chainstack.com/YOUR_KEY",
+        "POLYCLAW_PRIVATE_KEY": "0x...",
+        "OPENROUTER_API_KEY": "sk-or-v1-..."
+      }
+    }
+    ```
+
+    **Standalone users — export directly**
+
+    ```bash
+    export CHAINSTACK_NODE="https://polygon-mainnet.core.chainstack.com/YOUR_KEY"
+    export POLYCLAW_PRIVATE_KEY="0x..."
+    export OPENROUTER_API_KEY="sk-or-v1-..."
+    ```
+
+    Alternatively, create a `.env` file in the skill root directory (`~/.openclaw/skills/polyclaw/.env`). PolyClaw loads it automatically via `python-dotenv` on every invocation.
+
+    <Note>
+      See the [Configuration](/configuration) page for the full list of optional variables, including proxy settings (`HTTPS_PROXY`, `CLOB_MAX_RETRIES`) and the optional `POLY_BUILDER_CODE` for order attribution.
+    </Note>
+
+  </Step>
+
+  <Step title="Set Contract Approvals (One-Time)">
+
+    Before your first trade, you must authorize Polymarket's smart contracts to move tokens on your behalf. This is a one-time step per wallet.
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet approve
+    ```
+
+    This submits **6 approval transactions** to Polygon mainnet contracts (CTF, CTF Exchange V2, Neg Risk CTF Exchange V2, and related contracts). Each transaction costs a small amount of POL in gas — the total is roughly **~0.01 POL**.
+
+    <Tip>
+      You only need to run `wallet approve` once per wallet address. If you switch to a new private key, run it again for that wallet.
+    </Tip>
+
+  </Step>
+
+  <Step title="Browse Markets and Place Your First Trade">
+
+    With approvals set, you are ready to trade. The typical flow looks like this:
+
+    **1. Check your wallet balances**
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet status
+    ```
+
+    Displays your wallet address, POL balance (for gas), pUSD balance (trading collateral), and USDC.e balance. Trades require pUSD — if you only have USDC.e, wrap it 1:1 via the Collateral Onramp.
+
+    **2. Discover trending markets**
+
+    ```bash
+    uv run python scripts/polyclaw.py markets trending
+    ```
+
+    Returns the top markets by 24-hour volume, including market IDs, questions, current YES/NO prices, and volume figures.
+
+    **3. Buy a position**
+
+    ```bash
+    uv run python scripts/polyclaw.py buy <market_id> YES 25
+    ```
+
+    Replace `<market_id>` with the ID from the trending output above. This command:
+    - Splits `$25` pUSD into 25 YES + 25 NO tokens via the CTF contract
+    - Sells the 25 NO tokens on the CLOB order book at the current market price
+    - Records the resulting YES position locally with entry price and token count
+
+    **4. Check your positions**
+
+    ```bash
+    uv run python scripts/polyclaw.py positions
+    ```
+
+    Lists all open positions with entry price, current market price, and live P&L.
+
+    **Full example flow**
+
+    ```bash
+    uv run python scripts/polyclaw.py wallet status
+    uv run python scripts/polyclaw.py markets trending
+    uv run python scripts/polyclaw.py buy <market_id> YES 25
+    uv run python scripts/polyclaw.py positions
+    ```
+
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What's Next
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+<CardGroup cols={3}>
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Full reference for all environment variables, including proxy settings and optional builder code attribution.
+  </Card>
+  <Card title="Browse Markets" icon="chart-line" href="/commands/markets">
+    Detailed reference for `markets trending`, `markets search`, and `market <id>` commands.
+  </Card>
+  <Card title="Trading Reference" icon="ethereum" href="/commands/trading">
+    Full reference for the `buy` command, split + CLOB execution flow, and the `--skip-sell` flag.
+  </Card>
+  <Card title="Trading Flow Concepts" icon="book-open" href="/concepts/trading-flow">
+    Understand how the split mechanism and CLOB order book work together to produce a directional position.
+  </Card>
+  <Card title="Hedge Discovery" icon="shield-halved" href="/commands/hedge">
+    Use `hedge scan` and `hedge analyze` to find LLM-validated covering portfolio opportunities.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+    Solutions for common issues: Cloudflare CLOB blocks, insufficient pUSD, approval errors, and more.
+  </Card>
+</CardGroup>
